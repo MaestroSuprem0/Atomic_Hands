@@ -1,0 +1,2487 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Laboratorio Peligroso — ACS UNMSM</title>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+} }
+</script>
+
+<style>
+  :root{ --bg:#0b1020; --panel:#121a33; --borde:#22305c; --texto:#e8ecf8;
+         --tenue:#8fa0c8; --acento:#4da3ff; --ok:#37d67a; --alerta:#ffb020; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--texto);font-family:system-ui,Segoe UI,sans-serif;overflow:hidden}
+  #app{display:flex;height:100vh;width:100vw}
+  #escena{flex:1;position:relative;min-width:0;overflow:hidden}
+
+  /* ── CAPAS, de atrás hacia adelante ──
+     1 video (cámara)  2 Carbonito 3D  3 manos RGB  4 juego 2D  5 globo de diálogo
+     Las manos van DEBAJO del juego a propósito: las fichas y el puntero tienen que
+     seguir leyéndose aunque el esqueleto pase por encima del vaso. */
+  #video       {position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+                transform:scaleX(-1);opacity:.32;display:none;z-index:1}
+  #mundo3d     {position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
+  #manos       {position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none}
+  #juego       {position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;z-index:4}
+
+  #globo{position:absolute;z-index:5;max-width:290px;background:rgba(8,13,28,.94);
+         border:1px solid var(--acento);border-radius:12px;padding:10px 13px;font-size:13px;
+         line-height:1.45;opacity:0;transition:opacity .3s;pointer-events:none;
+         transform:translate(-50%,-100%);box-shadow:0 6px 26px rgba(0,0,0,.5)}
+  #globo.ver{opacity:1}
+  #globo b{color:var(--acento)}
+  #globo:after{content:'';position:absolute;left:50%;bottom:-7px;margin-left:-7px;
+               width:0;height:0;border:7px solid transparent;border-top-color:var(--acento);border-bottom:0}
+
+  #lateral{width:330px;background:var(--panel);border-left:1px solid var(--borde);
+           display:flex;flex-direction:column;overflow:hidden}
+  .cab{padding:14px 16px;border-bottom:1px solid var(--borde)}
+  .cab h1{font-size:16px}
+  .cab p{font-size:12px;color:var(--tenue);margin-top:3px}
+  #visorCaja{position:relative;height:0;overflow:hidden;flex-shrink:0;
+             border-bottom:1px solid var(--borde);
+             background:radial-gradient(circle at 50% 45%,#16224a,#0d1densidad 70%);
+             background:radial-gradient(circle at 50% 45%,#16224a,#0b1densidad 75%);
+             background:radial-gradient(circle at 50% 45%,#16224a,#0a1024 75%);
+             transition:height .25s ease}
+  #visorCaja.ver{height:190px}
+  #visor3d{position:absolute;inset:0;width:100%;height:100%}
+  #visorPie{position:absolute;left:0;right:0;bottom:0;padding:5px 10px;font-size:11px;
+            color:var(--tenue);text-align:center;background:linear-gradient(transparent,#0a1024cc 55%)}
+  #info{flex:1;overflow-y:auto;padding:14px 16px}
+  #info h2{font-size:13px;color:var(--tenue);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+  .vacio{color:var(--tenue);font-size:13px;line-height:1.6}
+  .simbolo{font-size:40px;font-weight:700;line-height:1}
+  .nombre{font-size:19px;font-weight:600}
+  .fam{font-size:11.5px;color:var(--tenue);margin-top:2px}
+  .ec{font-family:ui-monospace,Consolas,monospace;background:#0a0f22;border:1px solid var(--borde);
+      border-radius:7px;padding:9px 11px;font-size:13.5px;margin:11px 0;word-break:break-word}
+  .pq{font-size:13px;line-height:1.55;color:#cbd6f0;margin-bottom:10px}
+  .etq{font-size:11px;color:var(--tenue);text-transform:uppercase;letter-spacing:.6px;margin:12px 0 4px}
+  .barra{display:flex;gap:3px;margin-top:4px}
+  .barra i{flex:1;height:7px;border-radius:3px;background:#1e2949}
+  .barra i.on{background:var(--alerta)}
+  .aviso{background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.35);
+         border-radius:7px;padding:8px 10px;font-size:12px;color:#ffd489;margin-top:10px}
+  .capas{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+  .estructura{background:#0a0f22;border:1px solid var(--borde);border-radius:8px;
+              padding:6px;margin:9px 0;text-align:center}
+  .estructura img{width:100%;max-width:230px;height:auto;display:block;margin:0 auto}
+  .estructura small{display:block;color:var(--tenue);font-size:10.5px;margin-top:3px}
+.fuente{font-size:11px;color:var(--tenue);margin-top:12px;padding-top:9px;
+          border-top:1px solid var(--borde);line-height:1.5}
+  .fuente a{color:var(--acento);text-decoration:none}
+  .fuente a:hover{text-decoration:underline}
+  .capas span{background:#0a0f22;border:1px solid var(--borde);border-radius:5px;
+              padding:2px 8px;font-size:12px;font-family:ui-monospace,monospace}
+  #pie{border-top:1px solid var(--borde);padding:11px 16px;display:flex;gap:8px;
+       align-items:center;flex-wrap:wrap}
+  button{background:var(--acento);color:#04122a;border:0;border-radius:7px;padding:8px 13px;
+         font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+  button:hover{filter:brightness(1.12)}
+  button.sec{background:#1e2949;color:var(--texto)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  #estado{font-size:11.5px;color:var(--tenue);width:100%;line-height:1.45}
+  #estado.err{color:#ff8f8f}
+  #estado.ok{color:var(--ok)}
+  #modo{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;
+        background:rgba(8,13,28,.82);border:1px solid var(--borde);border-radius:20px;
+        padding:5px 13px;font-size:12px;display:flex;align-items:center;gap:7px}
+  #puntoModo{width:8px;height:8px;border-radius:50%;background:var(--acento)}
+  #marcador{position:absolute;top:12px;right:12px;z-index:6;background:rgba(8,13,28,.82);
+            border:1px solid var(--borde);border-radius:9px;padding:7px 13px;font-size:12px;text-align:right}
+  #marcador b{font-size:17px;color:var(--ok)}
+  #marcador .segunda{margin-top:2px;padding-top:3px;border-top:1px solid var(--borde)}
+  #marcador .segunda b{color:#c77dff}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="escena">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="mundo3d"></canvas>
+    <canvas id="manos"></canvas>
+    <canvas id="juego"></canvas>
+    <div id="globo"></div>
+    <div id="modo"><span id="puntoModo"></span><span id="modoTxt">Modo ratón</span></div>
+    <div id="marcador">
+      <div>elementos <b id="cuenta">0</b>/<span id="total">19</span></div>
+      <div class="segunda">compuestos <b id="cuentaC">0</b>/<span id="totalC">67</span></div>
+    </div>
+  </div>
+  <aside id="lateral">
+    <div class="cab">
+      <h1>Laboratorio Peligroso</h1>
+      <p>Los experimentos que ningún colegio puede hacer</p>
+    </div>
+    <div id="visorCaja">
+      <canvas id="visor3d"></canvas>
+      <div id="visorPie"></div>
+    </div>
+    <div id="info">
+      <h2>Elemento</h2>
+      <div class="vacio" id="infoCuerpo">
+        Arrastra un elemento de la columna izquierda hasta el vaso de agua.<br><br>
+        Empieza por el <b>Sodio</b>. Después prueba el <b>Cesio</b>… y luego un gas noble, a ver qué pasa.
+      </div>
+    </div>
+    <div id="pie">
+      <button id="btnCam">Activar cámara</button>
+      <button id="btnVaciar" class="sec">Vaciar mesa</button>
+      <button id="btnSonido" class="sec">🔇 Sonido</button>
+      <button id="btnFoto" class="sec">📷 Captura</button>
+      <button id="btnReset" class="sec">Reiniciar</button>
+      <div id="estado">Modo ratón activo. Todo funciona sin cámara.</div>
+    </div>
+  </aside>
+</div>
+
+<script src="datos.js"></script>
+<script>
+"use strict";
+/* ═══════════════════════════════════════════════════════════════
+   LABORATORIO PELIGROSO
+   Regla de oro: NADA falla en silencio. Todo error va a consola
+   Y a pantalla. Es justo lo que le faltó al proyecto anterior.
+
+   ── MEDICIONES (Chrome, ventana de 950x720, dpr 1.5, portátil sin GPU
+      dedicada). Mediana de 7 tandas; se midió ANTES de tocar nada y
+      después de cada cambio. Encender con  perfLab(true)  en consola.
+
+      Cambio                          antes        después
+      ─────────────────────────────────────────────────────────────
+      carbonito.glb (descarga)        83.88 MB     4.13 MB
+      vértices del modelo             1 176 990    344 406
+      texturas (VRAM estimada)        3x4096²      3x1024²
+                                      ~268 MB      ~17 MB
+      dibujar() en reposo             0.12 ms      0.12 ms  (igual)
+      dibujar() con 300 partículas
+        y 40 destellos                0.34 ms      0.23 ms
+      60 destellos en pantalla        0.145 ms     0.060 ms
+      desvanecer()                    0.002 ms     0.000 ms
+      situarGlobo()                   0.002 ms     0.000 ms
+      animarCarbonito() (lado CPU)    0.018 ms     0.018 ms
+      capa de manos, 2 manos          —            0.16 ms
+      frame completo, peor caso       —            0.41 ms
+
+   ── SEGUNDA RONDA (mesa de enlaces, 19 elementos, gestos) ───────
+      Misma máquina y mismo método. Lo nuevo no movió la aguja:
+
+      dibujar() en reposo                          0.09 ms
+      dibujar() con la mesa ocupada y un mensaje   0.11 ms
+      dibujar() con 300 partículas y 40 destellos  0.23 ms
+      capa de manos, 2 manos en cuadro             0.11 ms
+      animarCarbonito()                            0.02 ms
+      frame completo, peor caso                    0.35 ms
+      margen hasta los 16.7 ms de un frame a 60    16.3 ms
+
+   La mesa de enlaces cuesta 0.02 ms porque el texto se parte en líneas UNA
+   vez, al cambiar el mensaje, y no en cada frame: medir texto es de lo más
+   caro que tiene el canvas 2D.
+
+   Lecturas honestas de esos números:
+   · desvanecer() y situarGlobo() NO eran cuellos de botella (0.002 ms).
+     Se arreglaron igual porque asignaban objetos por frame, pero quien
+     costaba de verdad en Carbonito era la GPU: 1.18 M de vértices y
+     268 MB de texturas. Ahí está la mejora real.
+   · El degradado cacheado de las fichas no cambia el tiempo de pared a
+     esta escala (10 fichas); lo que quita son 10 asignaciones por frame.
+   · Las cifras de arriba son coste de CPU. Los fps reales dependen del
+     equipo y hay que verlos con perfLab(true) en la máquina de destino.
+
+   ── SEGUIMIENTO: LERP FIJO vs FILTRO ONE EURO ────────────────────
+   Medido simulando el camino completo de las dos versiones sobre la misma
+   señal (detección a 30 Hz + relleno de frames a 60 Hz):
+
+      Situación                       LERP 0.30    One Euro
+      ──────────────────────────────────────────────────────
+      temblor con la mano quieta       0.53 px      0.30 px
+      (entrada cruda: 1.17 px)
+      retraso durante un barrido
+      rápido (~1400 px/s)             48.6 px      32.3 px
+
+   Lo importante no es cada número por separado, es que mejoran LOS DOS a la
+   vez. Con un LERP eso no se puede: bajarle el factor quita temblor y añade
+   retraso, subírselo hace lo contrario. Por eso se cambió.
+
+   ── LO QUE SE EVALUÓ Y NO SE HIZO ────────────────────────────────
+   · Inferencia en un Web Worker con OffscreenCanvas. El criterio para
+     adoptarlo era ganar 10 fps o más en un equipo modesto, y ese criterio NO
+     se ha podido comprobar aquí: sin cámara no hay inferencia real que medir.
+     Adoptarlo a ciegas significaría meter transferencia de frames entre hilos
+     y duplicar el camino de datos del control por gestos a cambio de una
+     mejora sin verificar. Queda pendiente de medir con cámara y equipo real.
+   · RDKit.js en el navegador. Su build mínima son 6.9 MB de WASM más 128 KB
+     de JS (medido, no estimado). El juego entero pesa 4.1 MB. Las estructuras
+     2D se generan en tiempo de compilación con RDKit de escritorio y viajan
+     como SVG de unos KB — ver herramientas/generar_estructuras.py.
+   · worldLandmarks para escalar el cursor por distancia. Se lee y se deja a
+     la vista en perfLab(true), pero no se usa en el juego: el grosor del
+     esqueleto ya escala con el tamaño aparente de la mano y da el mismo
+     resultado sin un segundo camino de datos que mantener.
+   ═══════════════════════════════════════════════════════════════ */
+const cv = document.getElementById('juego');
+const cx = cv.getContext('2d');
+const cvM = document.getElementById('manos');            // capa RGB del tracking
+const cxM = cvM.getContext('2d', { alpha:true });
+const $  = id => document.getElementById(id);
+
+/* -- 0. MEDICION ------------------------------------------------
+   Nada se optimizo a ciegas: este flag imprime el desglose real del
+   frame. Se enciende sin recargar escribiendo  perfLab(true)  en consola.
+   Las llamadas a performance.now() viven dentro del if para no pagarlas
+   cuando esta apagado.                                              */
+let DEBUG_PERF = false;
+/* Modo feria: ?feria=1 en la URL. Se lee aquí arriba porque media docena de
+   sitios preguntan por él, y con const no vale declararlo más abajo (zona
+   muerta temporal: hasta un typeof lanzaría ReferenceError). */
+const FERIA = new URLSearchParams(location.search).get('feria') === '1';
+/* En feria el medidor se ignora: nadie debe poder dejar la consola escupiendo
+   métricas en mitad de una demostración. */
+window.perfLab = v => (DEBUG_PERF = FERIA ? false : (v !== false));
+const perf = { mano:0, dibujo:0, manos:0, carbo:0, n:0, corte:0, frames:0, fps:0 };
+function medirFrame(t){
+  perf.frames++;
+  if (t - perf.corte < 1000) return;
+  perf.fps = perf.frames*1000/(t-perf.corte);
+  if (DEBUG_PERF && perf.n) console.log(
+    '[perf] '+perf.fps.toFixed(1)+' fps'+
+    ' | leerMano '        +(perf.mano  /perf.n).toFixed(2)+' ms'+
+    ' | dibujado2D '      +(perf.dibujo/perf.n).toFixed(2)+' ms'+
+    ' | manosRGB '        +(perf.manos /perf.n).toFixed(2)+' ms'+
+    ' | animarCarbonito ' +(perf.carbo /perf.n).toFixed(2)+' ms'+
+    ' | particulas '+nPart+'/'+MAX_PART+
+    ' | manos '+manos.map((m,i)=>m.viva?(m.lado||'?')+(i===manoMando?'*':''):'-').join(' ')+
+    (manoMando>=0 ? ' | gesto por '+manos[manoMando].fuente+
+                    (manos[manoMando].gesto?' ('+manos[manoMando].gesto+')':'')+
+                    (manos[manoMando].metros ? ' | mano a ~'+
+                      (manos[manoMando].metros/Math.max(1e-6,manos[manoMando].tam)/100).toFixed(2)+' m' : '')
+                  : ''));
+  perf.corte=t; perf.frames=0; perf.n=0;
+  perf.mano=perf.dibujo=perf.manos=perf.carbo=0;
+}
+
+function avisar(msg, tipo){
+  const e = $('estado');
+  e.textContent = msg; e.className = tipo || '';
+  if (tipo === 'err') console.error('[lab]', msg); else console.log('[lab]', msg);
+}
+
+/* ── 1. PUNTERO UNIFICADO ───────────────────────────────────────
+   El juego NUNCA pregunta si hay cámara. Solo lee este objeto.
+   Ratón y mano escriben aquí: mismo camino de código.           */
+const puntero = { x:0, y:0, activo:false, fuente:'raton', visto:false };
+
+const S = {
+  fichas:[], vaso:null, agarrada:null,
+  sacudida:0, agua:{ nivel:0, olas:0 }, descubiertos:new Set(), compuestos:new Set(),
+  mesa:null,
+  ultimoMov:Date.now(), ultimaAccion:Date.now(), reaccionando:0, W:0, H:0, dpr:1, sacX:0, sacY:0
+};
+const RAND = (a,b)=>a+Math.random()*(b-a);
+
+/* -- 1.b POOL DE PARTICULAS -------------------------------------
+   Antes cada reaccion hacia push de cientos de objetos y fisica() los
+   quitaba con splice: asignacion constante mas O(n) por borrado, o sea la
+   sierra de GC del perfil. Ahora los objetos se crean UNA vez y se
+   reciclan; borrar es traer la ultima viva al hueco (O(1)).          */
+const MAX_PART = 900, MAX_DEST = 240;
+const particulas = new Array(MAX_PART), destellos = new Array(MAX_DEST);
+for (let i=0;i<MAX_PART;i++) particulas[i]={x:0,y:0,vx:0,vy:0,vida:0,r:1,color:'#fff',tipo:'burbuja'};
+for (let i=0;i<MAX_DEST;i++) destellos[i]={x:0,y:0,vida:0,r:1,color:'#fff'};
+let nPart=0, nDest=0;
+const nuevaParticula = ()=> nPart<MAX_PART ? particulas[nPart++] : null;
+const nuevoDestello  = ()=> nDest<MAX_DEST ? destellos[nDest++]  : null;
+
+/* ── 2. DISPOSICIÓN: columna a la izquierda, vaso abajo-izquierda ── */
+function disponer(){
+  const r = cv.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  S.W = r.width; S.H = r.height; S.dpr = dpr;
+  cv.width = Math.round(r.width*dpr);
+  cv.height = Math.round(r.height*dpr);
+  cx.setTransform(dpr,0,0,dpr,0,0);
+  // la capa de manos comparte tamano y dpr con el juego: si divergen, el
+  // esqueleto se despega del puntero al redimensionar la ventana
+  cvM.width = cv.width; cvM.height = cv.height;
+  cxM.setTransform(dpr,0,0,dpr,0,0);
+  calcularEncuadre();
+
+  const n = ELEMENTOS.length;
+  /* El estante baja desde debajo del contador y se aparta del borde: con
+     seguimiento por cámara, alcanzar el filo de la pantalla obliga a estirar
+     el brazo fuera del encuadre cómodo.
+     Con 19 elementos una sola columna deja las fichas de 17 px pegadas unas a
+     otras en una pantalla de 720 de alto, así que a partir de 12 se parte en
+     dos columnas y cada ficha vuelve a tener tamaño de diana. */
+  const arriba = 104, abajo = S.H - 46;
+  const cols   = n > 12 ? 2 : 1;
+  const porCol = Math.ceil(n/cols);
+  const rad    = Math.max(17, Math.min(30, (abajo-arriba)/(porCol*2.45)));
+  const pasoX  = rad*2 + 20;
+  const colX   = S.W - Math.max(96, rad*3.4);              // columna exterior
+  const paso   = porCol>1 ? (abajo-arriba)/(porCol-1) : 0;
+
+  S.fichas = ELEMENTOS.map((el,i)=>{
+    const col = cols-1 - Math.floor(i/porCol);   // el primer grupo, más adentro
+    const X = colX - col*pasoX, Y = arriba + paso*(i%porCol);
+    return { el, r:rad, casaX:X, casaY:Y, x:X, y:Y, escala:1 };
+  });
+  // borde izquierdo del estante: las etiquetas se dibujan a su izquierda para
+  // que nunca se monten sobre la otra columna
+  S.estanteIzq = colX - (cols-1)*pasoX - rad;
+
+  // el vaso deja un pasillo para las etiquetas de la columna
+  const vw = Math.min(200, Math.max(120, S.W*0.17));
+  const vh = Math.min(230, S.H*0.30);
+  S.vaso = { x: 46, y: S.H - vh - 38, w:vw, h:vh };
+
+  /* Zona de enlace: entre el vaso y el estante, arriba, para que se lea como
+     un sitio distinto del vaso. Son dos dianas grandes a propósito: con la
+     mano temblando, una ranura pequeña es imposible de acertar. */
+  const izq = S.vaso.x + S.vaso.w + 34, der = S.estanteIzq - 120;
+  const mw = Math.max(240, Math.min(460, der - izq));
+  const mesa = S.mesa || (S.mesa = { ranuras:[], enlace:null, error:'', lineas:[], destello:0, factor:1 });
+  mesa.x = Math.max(izq, (izq + der)/2 - mw/2);
+  mesa.y = 96; mesa.w = mw; mesa.h = 156;
+  mesa.rs = Math.max(22, Math.min(34, mw*0.075));          // radio de cada ranura
+  envolverMensaje();
+
+  if (mundoRender){
+    mundoRender.setSize(S.W, S.H, false);
+    mundoRender.autoClear = false;   // los clear se gestionan a mano (visor + escena)
+    mundoCam.aspect = S.W/S.H; mundoCam.updateProjectionMatrix();
+    ajustarRecorrido();
+  }
+}
+window.addEventListener('resize', disponer);
+
+/* ── 3. ENTRADA: RATÓN ─────────────────────────────────────────── */
+function pos(ev){ const r=cv.getBoundingClientRect(); return {x:ev.clientX-r.left,y:ev.clientY-r.top}; }
+cv.addEventListener('mousemove', ev=>{
+  if (puntero.fuente!=='raton') return;
+  const p=pos(ev); puntero.x=p.x; puntero.y=p.y; puntero.visto=true; S.ultimoMov=Date.now();
+});
+cv.addEventListener('mousedown', ev=>{
+  if (puntero.fuente!=='raton') return;
+  const p=pos(ev); puntero.x=p.x; puntero.y=p.y; puntero.activo=true; S.ultimoMov=Date.now();
+});
+window.addEventListener('mouseup', ()=>{ if(puntero.fuente==='raton') puntero.activo=false; });
+cv.addEventListener('touchmove', ev=>{
+  const t=ev.touches[0]; if(!t) return;
+  const r=cv.getBoundingClientRect();
+  puntero.x=t.clientX-r.left; puntero.y=t.clientY-r.top;
+  puntero.activo=true; puntero.visto=true; S.ultimoMov=Date.now(); ev.preventDefault();
+},{passive:false});
+window.addEventListener('touchend', ()=>{ puntero.activo=false; });
+
+/* ── 4. AGARRE ─────────────────────────────────────────────────── */
+let activoPrevio = false;
+function actualizarAgarre(){
+  const empieza = puntero.activo && !activoPrevio;
+  const suelta  = !puntero.activo && activoPrevio;
+  activoPrevio  = puntero.activo;
+
+  if (empieza && !S.agarrada){
+    let mejor=null, dmin=1e9;
+    for (const f of S.fichas){
+      if (f.npc) continue;                    // esa la lleva Carbonito
+      const d = Math.hypot(f.x-puntero.x, f.y-puntero.y);
+      if (d < f.r*2.1 && d < dmin){ dmin=d; mejor=f; }   // radio generoso a propósito
+    }
+    if (mejor){ S.agarrada = mejor; S.ultimaAccion = Date.now(); mostrarElemento(mejor.el); }
+  }
+  if (S.agarrada && puntero.activo){
+    S.agarrada.x += (puntero.x - S.agarrada.x)*0.35;     // inercia: persigue, no se pega
+    S.agarrada.y += (puntero.y - S.agarrada.y)*0.35;
+  }
+  if (suelta && S.agarrada){
+    const f = S.agarrada, v = S.vaso, m = S.mesa;
+    const enVaso = f.x > v.x-24 && f.x < v.x+v.w+24 &&
+                   f.y > v.y-24 && f.y < v.y+v.h+32;
+    // la mesa acepta con margen: soltar justo en el borde es lo normal cuando
+    // el puntero lo lleva una mano
+    const enMesa = m && f.x > m.x-26 && f.x < m.x+m.w+26 &&
+                        f.y > m.y-26 && f.y < m.y+m.h+26;
+    if (enVaso)      lanzar(f);
+    else if (enMesa) ponerEnMesa(f);
+    else             volverACasa(f);
+    S.agarrada = null;
+  }
+}
+
+/* Color por FAMILIA, no por elemento. Enseñar que los alcalinos son "los
+   morados" y los gases nobles "los celestes" es media clase de tabla
+   periódica: el color deja de ser decoración y pasa a ser información.
+   El color CPK real de cada elemento sigue guardado en elementos.json
+   (validado contra PubChem); aquí solo mandamos en la presentación.      */
+const COLOR_FAMILIA = {
+  alcalino:         '#a855f7',   // morado
+  alcalinoterreo:   '#22c55e',   // verde
+  halogeno:         '#eab308',   // amarillo
+  gas_noble:        '#38bdf8',   // celeste
+  no_metal:         '#f97316',   // naranja
+  metaloide:        '#14b8a6',   // turquesa
+  metal:            '#94a3b8',   // gris azulado
+  metal_transicion: '#f43f5e'    // rojo
+};
+const colorDe = el => COLOR_FAMILIA[el.familia] || colorDe(el);
+
+/* ══ VISOR 3D DEL PANEL ═══════════════════════════════════════════
+   Muestra el átomo (modelo de Bohr) o el compuesto formado.
+
+   Se dibuja con el MISMO WebGLRenderer que Carbonito, usando una esquina
+   del canvas grande como viewport y copiando esa región al canvas 2D del
+   panel. El proyecto original creaba un renderer por cada elemento que se
+   señalaba y agotaba los contextos WebGL del navegador ("Too many active
+   WebGL contexts"): esto no puede volver a pasar porque el renderer sigue
+   siendo uno solo.
+
+   Orden importante: primero se pinta la esquina y se copia, y DESPUÉS la
+   escena principal encima. Así la esquina queda tapada y no se ve.       */
+const VIS_W = 300, VIS_H = 190;
+let escenaVis=null, camVis=null, grupoVis=null, cvVis=null, cxVis=null, visActivo=false;
+let visClave='';
+
+function iniciarVisor(){
+  if (!THREEref || escenaVis) return;
+  escenaVis = new THREEref.Scene();
+  camVis = new THREEref.PerspectiveCamera(42, VIS_W/VIS_H, 0.1, 100);
+  camVis.position.set(0, 0.9, 7);
+  camVis.lookAt(0,0,0);
+  escenaVis.add(new THREEref.AmbientLight(0xffffff, 2.2));
+  const l1=new THREEref.DirectionalLight(0xffffff,2.2); l1.position.set(3,5,6); escenaVis.add(l1);
+  const l2=new THREEref.DirectionalLight(0x88aaff,1.0); l2.position.set(-4,-2,3); escenaVis.add(l2);
+  cvVis = $('visor3d'); cxVis = cvVis.getContext('2d');
+}
+
+function limpiarVisor(){
+  if (!grupoVis) return;
+  grupoVis.traverse(o=>{ if(o.isMesh||o.isLine){ o.geometry?.dispose();
+    (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m&&m.dispose()); }});
+  escenaVis.remove(grupoVis); grupoVis=null;
+}
+
+const esferaGeo = r => new THREEref.SphereGeometry(r, 24, 18);
+function bola(r, color){
+  return new THREEref.Mesh(esferaGeo(r),
+    new THREEref.MeshLambertMaterial({ color:new THREEref.Color(color) }));
+}
+
+/* ── Átomo suelto: modelo de Bohr con sus capas reales ── */
+function construirAtomo(el){
+  const g = new THREEref.Group();
+  const col = colorDe(el);
+  const nuc = bola(0.62, col); g.add(nuc);
+  let radio = 1.35;
+  el.capas.forEach((n, i) => {
+    const aro = new THREEref.Mesh(
+      new THREEref.TorusGeometry(radio, 0.028, 10, 90),
+      new THREEref.MeshBasicMaterial({ color:0x8fa0c8, transparent:true, opacity:0.5 }));
+    aro.rotation.x = Math.PI/2; g.add(aro);
+    for (let k=0;k<n;k++){
+      const e = bola(0.13, 0x8fd6ff);
+      const a = (k/n)*Math.PI*2;
+      e.position.set(Math.cos(a)*radio, 0, Math.sin(a)*radio);
+      e.userData = { r:radio, a0:a, v:0.55 + i*0.16 };
+      g.add(e);
+    }
+    radio += 0.62;
+  });
+  g.rotation.x = -0.42;
+  const escala = Math.min(1, 3.6/radio);   // que quepa aunque tenga 7 capas
+  g.scale.setScalar(escala);
+  return { grupo:g, pie:'Modelo de Bohr · '+el.capas.join('-')+' electrones por capa' };
+}
+
+/* ── Geometría VSEPR sencilla: las direcciones de los enlaces ── */
+function direccionesEnlace(n, valenciaCentral){
+  const R = 1.55, g = Math.PI/180;
+  if (n === 1) return [[R,0,0]];
+  if (n === 2){
+    if (valenciaCentral >= 6){                    // O, S: dos pares libres -> angular
+      const a = 104.5*g/2;
+      return [[Math.sin(a)*R, Math.cos(a)*R, 0], [-Math.sin(a)*R, Math.cos(a)*R, 0]];
+    }
+    return [[R,0,0], [-R,0,0]];                   // C: lineal (CO2)
+  }
+  if (n === 3){
+    const inclina = (valenciaCentral >= 5) ? 20*g : 0;   // N: pirámide; B: plana
+    return [0,1,2].map(i=>{ const a=i*120*g;
+      return [Math.cos(a)*R*Math.cos(inclina), -Math.sin(inclina)*R, Math.sin(a)*R*Math.cos(inclina)]; });
+  }
+  const t = R/Math.sqrt(3);                        // tetraedro
+  return [[t,t,t],[t,-t,-t],[-t,t,-t],[-t,-t,t]].slice(0,n);
+}
+
+function palo(a, b){
+  const dir = new THREEref.Vector3().subVectors(b,a);
+  const len = dir.length();
+  const m = new THREEref.Mesh(new THREEref.CylinderGeometry(0.10,0.10,len,10),
+    new THREEref.MeshLambertMaterial({ color:0xc8d4ee }));
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREEref.Vector3(0,1,0), dir.normalize());
+  return m;
+}
+
+/* ── Compuesto: molécula discreta o red cristalina ── */
+function construirCompuesto(en){
+  const g = new THREEref.Group();
+  const simbolos = Object.keys(en.cuantos);
+  const dato = sim => ELEMENTOS.find(e=>e.simbolo===sim) || {familia:'metal', color:'#888'};
+
+  if (en.tipo === 'ionica'){
+    /* Un compuesto iónico NO es una molécula: es una red. "NaCl" es la
+       proporción, no una partícula suelta. Dibujar dos bolitas unidas por un
+       palo enseñaría algo falso, así que se dibuja un trozo de cristal.   */
+    const [A,B] = simbolos;
+    const nA = en.cuantos[A], nB = en.cuantos[B];
+    const cat = en.transferencia ? en.transferencia.cede : A;
+    const ani = en.transferencia ? en.transferencia.capta : B;
+    if (nA === nB){                                  // 1:1 -> sal de roca 3x3x3
+      const d = 1.05;
+      for (let i=0;i<3;i++) for (let j=0;j<3;j++) for (let k=0;k<3;k++){
+        const par = (i+j+k) % 2 === 0;
+        const sim = par ? cat : ani;
+        const b = bola(par?0.36:0.48, colorDe(dato(sim)));
+        b.position.set((i-1)*d, (j-1)*d, (k-1)*d);
+        g.add(b);
+      }
+      g.rotation.set(-0.35, 0.6, 0);
+      return { grupo:g, pie:'Red cristalina · no es una molécula suelta' };
+    }
+    // proporciones distintas: un ion rodeado por sus contraiones
+    const centro = en.cuantos[cat] < en.cuantos[ani] ? cat : ani;
+    const fuera  = centro === cat ? ani : cat;
+    g.add(bola(0.55, colorDe(dato(centro))));
+    const cuantos = Math.max(en.cuantos[fuera], 2);
+    direccionesEnlace(Math.min(4,cuantos), 4).forEach(d=>{
+      const b = bola(0.42, colorDe(dato(fuera)));
+      b.position.set(d[0]*1.15, d[1]*1.15, d[2]*1.15); g.add(b);
+    });
+    g.rotation.set(-0.3, 0.5, 0);
+    return { grupo:g, pie:'Proporción '+en.formula+' en la red cristalina' };
+  }
+
+  // covalente: molécula de verdad, con enlaces dibujados
+  let central = simbolos[0], enlaces = [];
+  if (simbolos.length === 1){                       // O2, N2, H2
+    const e = dato(central), col = colorDe(e);
+    const a = new THREEref.Vector3(-0.8,0,0), b = new THREEref.Vector3(0.8,0,0);
+    const b1 = bola(0.55, col), b2 = bola(0.55, col);
+    b1.position.copy(a); b2.position.copy(b);
+    g.add(palo(a,b), b1, b2);
+    return { grupo:g, pie:'Molécula diatómica' };
+  }
+  central = simbolos.reduce((m,x)=> en.cuantos[x] < en.cuantos[m] ? x : m, simbolos[0]);
+  const otros = simbolos.filter(x=>x!==central);
+  const ec = dato(central);
+  const n = otros.reduce((t,x)=>t+en.cuantos[x], 0);
+  const dirs = direccionesEnlace(n, ec.valencia || 4);
+  g.add(bola(0.60, colorDe(ec)));
+  let i = 0;
+  for (const sim of otros){
+    for (let k=0;k<en.cuantos[sim];k++){
+      const d = dirs[i++] || [0,0,0];
+      const v = new THREEref.Vector3(d[0],d[1],d[2]);
+      const b = bola(0.38, colorDe(dato(sim)));
+      b.position.copy(v);
+      g.add(palo(new THREEref.Vector3(0,0,0), v), b);
+    }
+  }
+  g.rotation.set(-0.2, 0.4, 0);
+  return { grupo:g, pie:'Molécula · los átomos COMPARTEN electrones' };
+}
+
+/* Cambia lo que muestra el visor. La clave evita reconstruir la escena en
+   cada frame cuando no ha cambiado nada. */
+function mostrarEnVisor(clave, constructor){
+  iniciarVisor();
+  if (!escenaVis) return;
+  if (clave === visClave) return;
+  visClave = clave;
+  limpiarVisor();
+  if (!clave){ visActivo=false; $('visorCaja').classList.remove('ver'); return; }
+  const r = constructor();
+  grupoVis = r.grupo; escenaVis.add(grupoVis);
+  $('visorPie').textContent = r.pie;
+  $('visorCaja').classList.add('ver');
+  visActivo = true;
+}
+
+function animarVisor(tms){
+  if (!visActivo || !grupoVis || !mundoRender) return;
+  grupoVis.rotation.y += 0.006;
+  const t = tms*0.001;
+  grupoVis.children.forEach(o=>{
+    const u = o.userData;
+    if (u && u.r){ const a = u.a0 + t*u.v;
+      o.position.set(Math.cos(a)*u.r, 0, Math.sin(a)*u.r); }
+  });
+  // se pinta en una esquina del canvas grande y se copia al panel
+  const dpr = mundoRender.getPixelRatio(), gl = mundoRender.domElement;
+  mundoRender.setScissorTest(true);
+  mundoRender.setViewport(0,0,VIS_W,VIS_H);
+  mundoRender.setScissor(0,0,VIS_W,VIS_H);
+  mundoRender.clear();
+  mundoRender.render(escenaVis, camVis);
+  mundoRender.setScissorTest(false);
+  const w = cvVis.clientWidth||VIS_W, h = cvVis.clientHeight||VIS_H;
+  if (cvVis.width!==w || cvVis.height!==h){ cvVis.width=w; cvVis.height=h; }
+  cxVis.clearRect(0,0,w,h);
+  // el viewport de WebGL arranca abajo-izquierda; el canvas 2D, arriba-izquierda
+  const sx=0, sy=Math.max(0, gl.height - Math.round(VIS_H*dpr));
+  const sw=Math.round(VIS_W*dpr), sh=Math.round(VIS_H*dpr);
+  try { cxVis.drawImage(gl, sx, sy, sw, sh, 0, 0, w, h); }
+  catch(e){ console.error('[lab] visor: falló la copia', e); }
+  mundoRender.setViewport(0,0,S.W,S.H);
+
+  /* Diagnóstico de una sola vez: si la copia sale vacía hay que saberlo por
+     consola, no quedarse mirando un recuadro negro. */
+  if (!animarVisor.revisado){
+    animarVisor.revisado = true;
+    let opaco = 0;
+    try {
+      const d = cxVis.getImageData(0,0,w,h).data;
+      for (let i=3;i<d.length;i+=4*97) if (d[i]>8) opaco++;
+    } catch(e){ console.error('[lab] visor: getImageData falló', e); }
+    console.log('[lab] visor 3D →', {canvasGL:[gl.width,gl.height], dpr,
+      origen:[sx,sy,sw,sh], destino:[w,h], pixelesOpacos:opaco,
+      hijos:grupoVis?grupoVis.children.length:0});
+    if (!opaco) console.error('[lab] visor 3D: la copia salió vacía. Revisa origen/destino de arriba.');
+  }
+}
+
+/* ── 4.b LA MESA DE ENLACES ─────────────────────────────────────
+   La segunda mecánica del juego. El vaso enseña "elemento + agua"; la mesa
+   enseña de dónde salen los compuestos: quién REGALA electrones, quién los
+   ROBA y en qué proporción, que es lo que ya venía calculado por el motor de
+   reacciones.json (los 56 compuestos iónicos, incluidas las 30 sales de
+   alcalino x halógeno).
+
+   Regla de oro heredada del proyecto anterior: ante una combinación imposible
+   NUNCA quedarse callado. Cada fallo tiene su explicación, y las explicaciones
+   ya estaban escritas en MENSAJES_ENLACE.                                   */
+const ENLACE_POR_CLAVE = new Map();
+for (const e of ENLACES) ENLACE_POR_CLAVE.set(e.clave, e);
+
+/* "Li3N" se lee fatal en pantalla; "Li₃N" es lo que ve en el cuaderno. Solo
+   se bajan los dígitos que van detrás de un símbolo o de un paréntesis, para
+   no tocar los coeficientes de delante ("3Li + N"). */
+const SUBI = ['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'];
+const conSub = t => t.replace(/([A-Za-z)\]])(\d+)/g,
+  (m,a,d) => a + d.replace(/\d/g, c => SUBI[+c]));
+
+const claveDe = (a,b) => (a<b ? a+'+'+b : b+'+'+a);
+
+function vaciarMesa(){
+  const M = S.mesa; if (!M) return;
+  M.ranuras.length = 0; M.enlace = null; M.error = '';
+  envolverMensaje();
+}
+
+/* Un átomo suelto en la mesa. Repetir el mismo elemento suma cantidad: así se
+   construye la proporción (2 F por cada Ca) sin inventar ninguna interfaz de
+   números, solo soltando átomos.                                           */
+/* ¿Sumar este átomo a lo que ya hay puede llevar a un compuesto conocido?
+   Hace falta para no cerrar la jugada antes de tiempo: dos hidrógenos ya son
+   H₂, pero si el jugador venía a hacer agua todavía le falta soltar el O. */
+function puedeExtender(sim){
+  const conjunto = [];
+  for (const r of S.mesa.ranuras) if (conjunto.indexOf(r.el.simbolo)<0) conjunto.push(r.el.simbolo);
+  if (conjunto.indexOf(sim)<0) conjunto.push(sim);
+  if (conjunto.length > 2) return false;
+  const cl = conjunto.length===1 ? claveDe(sim,sim) : claveDe(conjunto[0], conjunto[1]);
+  return ENLACE_POR_CLAVE.has(cl);
+}
+
+function ponerEnMesa(f){
+  const M = S.mesa, el = f.el;
+  S.ultimaAccion = Date.now();
+  volverACasa(f);                     // el estante nunca se vacía
+  /* Cuándo se empieza de cero y cuándo se sigue sumando. Los átomos repetidos
+     SIEMPRE suman, aunque ya hubiera un compuesto hecho: si al llegar el
+     tercer hidrógeno se reiniciara, no habría manera de armar NH₃ soltando
+     primero los hidrógenos, que es justo lo que hace un chico. */
+  let ya = M.ranuras.find(r => r.el.simbolo === el.simbolo);
+  if (!ya && M.ranuras.length >= 2) vaciarMesa();          // llega un tercer elemento
+  else if (M.enlace && !ya && !puedeExtender(el.simbolo)) vaciarMesa();
+  else if (M.enlace) M.enlace = null;                      // se sigue construyendo
+  ya = M.ranuras.find(r => r.el.simbolo === el.simbolo);
+  if (ya){ ya.n++; ya.brillo = 1; }
+  else M.ranuras.push({ el, n:1, brillo:1 });
+  evaluarMesa();
+}
+
+/* Por qué no cuadra la proporción, dicho con los electrones a la vista. Sale
+   de los datos (cede/capta de cada elemento), no de una tabla escrita aparte. */
+function pistaProporcion(en, a, b){
+  if (a === b){    // un solo elemento en la mesa (el caso de O₂, N₂, H₂)
+    return 'Hacen falta '+en.cuantos[a.el.simbolo]+' átomos de '+a.el.simbolo+
+           '. Tienes '+a.n+'.';
+  }
+  const fa = en.cuantos[a.el.simbolo] || 0, fb = en.cuantos[b.el.simbolo] || 0;
+  return 'Hacen falta '+fa+' de '+a.el.simbolo+' por cada '+fb+' de '+b.el.simbolo+
+         '. Tienes '+a.n+' y '+b.n+'.';
+}
+
+/* Clasifica el fallo. Solo se afirma "no se unen" cuando es verdad a este
+   nivel: dos que ceden, o dos que captan. Si alguno COMPARTE (H, C) puede
+   haber molécula aunque no esté en nuestros datos, así que ahí se dice que no
+   la tenemos, no que no exista. */
+function porQueNoSeUnen(a, b){
+  if (a.familia==='gas_noble' || b.familia==='gas_noble') return MENSAJES_ENLACE.gas_noble;
+  if (a.tipoComp==='cede' && b.tipoComp==='cede')   return MENSAJES_ENLACE.dos_cationes;
+  if (a.tipoComp==='capta' && b.tipoComp==='capta') return MENSAJES_ENLACE.dos_aniones;
+  return 'Esa pareja no forma ninguno de los compuestos que tenemos preparados. '+
+         'Prueba juntando uno que REGALE electrones con uno que los ROBE.';
+}
+
+function evaluarMesa(){
+  const M = S.mesa, R = M.ranuras;
+  M.enlace = null; M.error = '';
+  if (R.length === 0){ envolverMensaje(); return; }
+  if (R.length === 1 && R[0].n === 1){
+    M.error = 'Ahora suelta el segundo átomo aquí.';
+    envolverMensaje(); return;
+  }
+  const a = R[0], b = R[1] || R[0];                 // 2 O sueltos = el par O+O
+  const en = ENLACE_POR_CLAVE.get(claveDe(a.el.simbolo, b.el.simbolo));
+  if (!en){ M.error = porQueNoSeUnen(a.el, b.el); envolverMensaje(); return; }
+
+  /* La proporción vale si es la de la fórmula O UN MÚLTIPLO ENTERO de ella:
+     2 Na + 2 Cl son 2 NaCl, y eso es tan correcto como 1 y 1. Lo que no vale
+     es 2 Na + 1 Cl, que es el error que sí hay que explicar. */
+  let factor = 0, cuadra = true;
+  for (const sim in en.cuantos){
+    const puestos = R.reduce((t,r)=> t + (r.el.simbolo===sim ? r.n : 0), 0);
+    const piden = en.cuantos[sim];
+    if (puestos === 0 || puestos % piden !== 0){ cuadra = false; break; }
+    const f = puestos / piden;
+    if (factor === 0) factor = f;
+    else if (f !== factor){ cuadra = false; break; }
+  }
+  if (!cuadra){
+    M.error = MENSAJES_ENLACE.proporcion_incorrecta+' '+pistaProporcion(en, a, b);
+    envolverMensaje(); return;
+  }
+  formarCompuesto(en, a, b, factor);
+}
+
+function formarCompuesto(en, a, b, factor){
+  const M = S.mesa;
+  M.enlace = en; M.error = ''; M.destello = 1;
+  mostrarEnVisor('co:'+en.formula, ()=>construirCompuesto(en));
+  M.factor = factor || 1;
+  const nuevo = !S.compuestos.has(en.formula);
+  S.compuestos.add(en.formula);
+  $('cuentaC').textContent = S.compuestos.size;
+  // celebración: chispas del color de los dos reactivos
+  const cxm = M.x + M.w*0.78, cym = M.y + M.h*0.55;
+  for (let i=0;i<44;i++){
+    const q = nuevaParticula(); if (!q) break;
+    q.x = cxm+RAND(-18,18); q.y = cym+RAND(-14,14);
+    q.vx = RAND(-1.6,1.6); q.vy = RAND(-2.2,-0.4);
+    q.vida = 1; q.r = RAND(2,4);
+    q.color = (i%2 ? a.colorDe(el) : b.colorDe(el)); q.tipo = 'chispa';
+  }
+  for (let i=0;i<6;i++){
+    const d = nuevoDestello(); if (!d) break;
+    d.x = cxm+RAND(-26,26); d.y = cym+RAND(-20,20); d.vida = 1; d.r = RAND(14,34);
+    d.color = '#c77dff';
+  }
+  sonarEnlace();
+  guardarProgreso();
+  mostrarCompuesto(en, a, b);
+  const conFactor = (M.factor>1 ? M.factor+' ' : '')+conSub(en.formula);
+  hablar('¡'+conFactor+'! '+(nuevo ? en.nombre+'.' : 'Ese ya lo tenías.')+
+         ' '+(en.transferencia
+              ? 'El <b>'+en.transferencia.cede+'</b> regala y el <b>'+en.transferencia.capta+'</b> recibe.'
+              : 'Aquí nadie regala nada: se prestan electrones.'), 7000);
+  envolverMensaje();
+}
+
+/* El texto del resultado se parte en líneas UNA vez, cuando cambia o cuando
+   se redimensiona, no en cada frame: envolver mide texto y medir texto es de
+   lo más caro que tiene el canvas 2D. */
+function envolverMensaje(){
+  const M = S.mesa; if (!M) return;
+  M.lineas = [];
+  if (!M.error) return;
+  const ancho = M.w - M.rs*4 - 34;
+  cx.font = '12px system-ui';
+  let linea = '';
+  for (const palabra of M.error.split(' ')){
+    const prueba = linea ? linea+' '+palabra : palabra;
+    if (cx.measureText(prueba).width > ancho && linea){ M.lineas.push(linea); linea = palabra; }
+    else linea = prueba;
+  }
+  if (linea) M.lineas.push(linea);
+  if (M.lineas.length > 5) M.lineas.length = 5;
+}
+
+/* ── el panel lateral, cuando se forma un compuesto ────────────── */
+function mostrarCompuesto(en, a, b){
+  const A = a.el, B = b.el;
+  const clave = 'ENL:'+en.formula;
+  if (clave === panelPintado) return;
+  panelPintado = clave;
+  let h = '<div style="display:flex;align-items:baseline;gap:10px">'+
+    '<div class="simbolo" style="color:#c77dff">'+conSub(en.formula)+'</div>'+
+    '<div><div class="nombre">'+en.nombre+'</div>'+
+    '<div class="fam">'+(en.tipo==='ionica'?'Compuesto iónico':'Molécula covalente')+'</div></div></div>'+
+    '<div class="etq">Lo que acaba de pasar</div><div class="ec">'+conSub(en.ecuacion)+'</div>'+
+    '<div class="pq">'+en.porQue+'</div>';
+  /* La estructura sale de herramientas/generar_estructuras.py, que la dibuja
+     con RDKit de escritorio. En el navegador no hay RDKit ni falta: son SVG de
+     unos 5 KB en vez de 7 MB de WebAssembly. Si el archivo faltara, el panel
+     se queda sin la imagen y no pasa nada más. */
+  if (en.svg){
+    h += '<div class="estructura">'+
+         '<img src="estructuras/'+en.svg+'" alt="Estructura de '+en.formula+'" '+
+         'onerror="this.parentNode.style.display=\'none\'">'+
+         '<small>Estructura 2D · generada con RDKit</small></div>';
+  }
+  if (en.transferencia){
+    const t = en.transferencia;
+    h += '<div class="etq">El trato</div><div class="pq">'+
+         '<b>'+t.cede+'</b> regala '+t.electronesPorAtomo+' electrón(es) por átomo · '+
+         '<b>'+t.capta+'</b> los recibe · '+t.total+' en total.</div>';
+  }
+  // el porqué de todo: cada uno acaba pareciéndose a un gas noble
+  h += '<div class="etq">Para parecerse a…</div><div class="capas">'+
+       '<span>'+A.simbolo+' → '+A.imita+'</span><span>'+B.simbolo+' → '+B.imita+'</span></div>'+
+       '<div class="pq" style="margin-top:8px">'+PRINCIPIO.porQueImporta+'</div>'+
+       '<div class="fuente">Elementos validados contra '+
+       '<a href="'+A.pubchem+'" target="_blank" rel="noopener">'+A.simbolo+' ↗</a> y '+
+       '<a href="'+B.pubchem+'" target="_blank" rel="noopener">'+B.simbolo+' ↗</a>'+
+       ' — PubChem, NCBI / National Library of Medicine</div>';
+  mostrarEnVisor('el:'+el.simbolo, ()=>construirAtomo(el));
+  $('infoCuerpo').innerHTML = h;
+  $('infoCuerpo').className = '';
+}
+
+/* ── dibujo de la mesa ─────────────────────────────────────────── */
+function caja(x,y,w,h,r){
+  if (cx.roundRect){ cx.beginPath(); cx.roundRect(x,y,w,h,r); return; }
+  cx.beginPath();                       // respaldo para navegadores sin roundRect
+  cx.moveTo(x+r,y); cx.lineTo(x+w-r,y); cx.quadraticCurveTo(x+w,y,x+w,y+r);
+  cx.lineTo(x+w,y+h-r); cx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  cx.lineTo(x+r,y+h); cx.quadraticCurveTo(x,y+h,x,y+h-r);
+  cx.lineTo(x,y+r); cx.quadraticCurveTo(x,y,x+r,y);
+  cx.closePath();
+}
+
+function dibujarRanura(r, x, y, rs, viva){
+  cx.lineWidth = 2;
+  if (!viva){                            // ranura vacía: solo el hueco
+    cx.strokeStyle = 'rgba(140,170,220,.38)';
+    cx.setLineDash([5,5]); cx.beginPath(); cx.arc(x,y,rs,0,7); cx.stroke();
+    cx.setLineDash([]);
+    return;
+  }
+  const el = r.el;
+  r.brillo *= 0.92;
+  const k = rs/100, d = S.dpr;
+  cx.setTransform(d*k,0,0,d*k, (x+S.sacX)*d, (y+S.sacY)*d);
+  cx.fillStyle = gradFicha(colorDe(el));
+  cx.beginPath(); cx.arc(0,0,100,0,7); cx.fill();
+  cx.setTransform(d,0,0,d, S.sacX*d, S.sacY*d);
+  cx.strokeStyle = 'rgba(255,255,255,'+(0.35+r.brillo*0.6).toFixed(2)+')';
+  cx.beginPath(); cx.arc(x,y,rs,0,7); cx.stroke();
+  cx.fillStyle='#0a1020'; cx.font='700 '+(rs*0.8)+'px system-ui';
+  cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText(el.simbolo, x, y+1);
+  if (r.n > 1){                          // cuántos átomos van de ese
+    cx.fillStyle='#c77dff'; cx.beginPath(); cx.arc(x+rs*0.82, y-rs*0.82, rs*0.42, 0, 7); cx.fill();
+    cx.fillStyle='#160a24'; cx.font='700 '+(rs*0.5)+'px system-ui';
+    cx.fillText('×'+r.n, x+rs*0.82, y-rs*0.8);
+  }
+}
+
+function dibujarMesa(){
+  const M = S.mesa; if (!M) return;
+  const R = M.ranuras;
+  const yc = M.y + M.h*0.56;
+  const x1 = M.x + M.rs + 16, x2 = x1 + M.rs*2 + 22;
+
+  cx.fillStyle = 'rgba(10,16,36,.66)';
+  caja(M.x, M.y, M.w, M.h, 14); cx.fill();
+  cx.lineWidth = M.destello>0.02 ? 3 : 1.5;
+  cx.strokeStyle = M.enlace ? 'rgba(199,125,255,'+(0.55+M.destello*0.45).toFixed(2)+')'
+                 : M.error && R.length>1 ? 'rgba(255,176,32,.55)'
+                 : 'rgba(77,163,255,.45)';
+  caja(M.x, M.y, M.w, M.h, 14); cx.stroke();
+
+  cx.textAlign='left'; cx.textBaseline='alphabetic';
+  cx.fillStyle='rgba(143,160,200,.9)'; cx.font='600 11px system-ui';
+  cx.fillText('ZONA DE ENLACE', M.x+14, M.y+22);
+
+  dibujarRanura(R[0], x1, yc, M.rs, !!R[0]);
+  cx.fillStyle='rgba(200,215,245,.75)'; cx.font='600 20px system-ui';
+  cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText('+', (x1+x2)/2, yc);
+  dibujarRanura(R[1], x2, yc, M.rs, !!R[1]);
+
+  const xr = x2 + M.rs + 14;
+  cx.fillText('→', xr, yc);
+  const xt = xr + 16, anchoT = M.x + M.w - xt - 12;
+
+  if (M.enlace){
+    cx.textAlign='left';
+    cx.fillStyle='#e6d4ff'; cx.font='700 '+Math.min(30, anchoT*0.22)+'px system-ui';
+    cx.fillText((M.factor>1 ? M.factor+' ' : '')+conSub(M.enlace.formula), xt, yc-8);
+    cx.fillStyle='rgba(200,215,245,.75)'; cx.font='11.5px system-ui';
+    cx.fillText(M.enlace.nombre.slice(0,26), xt, yc+16);
+  } else if (M.lineas.length){
+    cx.textAlign='left';
+    cx.fillStyle = R.length>1 ? '#ffd489' : 'rgba(160,180,220,.8)';
+    cx.font='12px system-ui';
+    const y0 = yc - (M.lineas.length-1)*7;
+    for (let i=0;i<M.lineas.length;i++) cx.fillText(M.lineas[i], xt, y0 + i*14);
+  } else {
+    cx.textAlign='left'; cx.fillStyle='rgba(160,180,220,.55)'; cx.font='12px system-ui';
+    cx.fillText('trae dos átomos', xt, yc);
+  }
+  cx.textBaseline='alphabetic';
+}
+
+/* ── 5. LA REACCIÓN ────────────────────────────────────────────── */
+function lanzar(f){
+  const el = f.el, v = S.vaso;
+  const ox = v.x+v.w/2, oy = v.y+v.h*0.68;
+
+  /* Nueve de los diecinueve elementos del estante no traen reacción con agua
+     validada. Antes esto reventaba en el.reaccion.nivel; y tampoco vale
+     inventarse la ecuación, así que se devuelve el átomo y se le enseña al
+     jugador la mecánica que SÍ le corresponde. */
+  if (!el.reaccion && !el.noReacciona){
+    hablar('El <b>'+el.nombre+'</b> no es de los que echamos al agua. '+
+           'Llévalo a la <b>zona de enlace</b> y júntalo con otro átomo.', 6500);
+    S.ultimaAccion = Date.now();
+    volverACasa(f); return;
+  }
+
+  S.descubiertos.add(el.simbolo);
+  $('cuenta').textContent = S.descubiertos.size;
+  mostrarElemento(el, true);
+
+  if (el.noReacciona){
+    for (let i=0;i<26;i++){
+      const p = nuevaParticula(); if (!p) break;
+      p.x=ox+RAND(-26,26); p.y=oy+RAND(-16,16); p.vx=RAND(-.35,.35); p.vy=RAND(-1.5,-.5);
+      p.vida=1; p.r=RAND(2,4.5); p.color='#9fb4dd'; p.tipo='burbuja';
+    }
+    S.agua.olas = 6;
+    hablar('El <b>'+el.nombre+'</b> se queda ahí flotando. '+el.noReacciona.mensaje+' No es un ingrediente: es la META.', 7500);
+    volverACasa(f); return;
+  }
+
+  const n = el.reaccion.nivel;
+  S.reaccionando = 1;
+  S.sacudida = n*n*1.5;
+  S.agua.olas = 10+n*4;
+  carbo.susto = Math.min(1, n/4);          // Carbonito se sobresalta
+
+  const cant = 22 + n*32, exp = n>=4;
+  for (let i=0;i<cant;i++){
+    const p = nuevaParticula(); if (!p) break;
+    p.x=ox+RAND(-v.w*0.22,v.w*0.22); p.y=oy+RAND(-14,14);
+    p.vx=RAND(-1,1)*(1+n*0.9); p.vy=RAND(-1,-0.2)*(1.6+n*1.5);
+    p.vida=1; p.r=RAND(2,3+n*0.9);
+    p.color = exp ? (Math.random()<0.5?'#ffd35e':'#ff7a3d') : (n>=3?'#bb86ff':'#8fd6ff');
+    p.tipo  = exp?'chispa':'burbuja';
+  }
+  if (n>=3) for(let i=0;i<n*7;i++){
+    const d = nuevoDestello(); if (!d) break;
+    d.x=ox+RAND(-40,40); d.y=oy-RAND(0,50); d.vida=1; d.r=RAND(8,22+n*6);
+    d.color = n>=5?'#ff5a2b': n>=4?'#c77dff':'#7ec8ff';
+  }
+
+  sonarReaccion(n);
+  guardarProgreso();
+  hablar('<b>'+el.nombre+'</b>: '+el.reaccion.efecto, 6500);
+  volverACasa(f);
+}
+function volverACasa(f){ setTimeout(()=>{ f.x=f.casaX; f.y=f.casaY; }, 120); }
+
+/* ── 6. PANEL ──────────────────────────────────────────────────── */
+let panelPintado = '';
+function mostrarElemento(el, conReaccion){
+  // Al barrer la columna con la mano esto se llamaba decenas de veces por
+  // segundo, y cada llamada es un innerHTML completo (reflow del panel).
+  // Si ya esta pintado ese mismo estado, no se toca el DOM.
+  const clave = el.simbolo + (conReaccion?'*':'');
+  if (clave === panelPintado) return;
+  panelPintado = clave;
+  const capas = el.capas.map((c,i)=>'<span>capa '+(i+1)+': '+c+'e⁻</span>').join('');
+  let h = '<div style="display:flex;align-items:baseline;gap:10px">'+
+      '<div class="simbolo" style="color:'+colorDe(el)+'">'+el.simbolo+'</div>'+
+      '<div><div class="nombre">'+el.nombre+'</div>'+
+      '<div class="fam">'+el.familiaNombre+' · Z='+el.Z+'</div></div></div>'+
+      '<div class="etq">Configuración electrónica</div><div class="capas">'+capas+'</div>'+
+      '<div class="etq">Qué quiere hacer</div><div class="pq">'+el.explicacion+'</div>';
+  if (conReaccion && el.reaccion){
+    const n = el.reaccion.nivel;
+    let barra=''; for(let i=1;i<=5;i++) barra += '<i class="'+(i<=n?'on':'')+'"></i>';
+    h += '<div class="etq">Al caer al agua</div><div class="ec">'+el.reaccion.ecuacion+'</div>'+
+         '<div class="pq">'+el.reaccion.porQue+'</div>'+
+         '<div class="etq">Intensidad '+n+'/5</div><div class="barra">'+barra+'</div>'+
+         '<div class="aviso">⚠ Esto jamás debe hacerse fuera de un laboratorio con supervisión.</div>';
+  } else if (conReaccion && el.noReacciona){
+    h += '<div class="etq">Al caer al agua</div>'+
+         '<div class="ec">'+el.simbolo+' + H₂O → '+el.simbolo+' + H₂O</div>'+
+         '<div class="pq">'+el.noReacciona.porQue+'</div>';
+    if (el.noReacciona.excepcion) h += '<div class="aviso">'+el.noReacciona.excepcion+'</div>';
+  }
+  h += '<div class="etq">Dato curioso</div><div class="pq">'+el.dato+'</div>';
+  h += '<div class="etq">Ficha atómica</div><div class="capas">'+
+       '<span>masa '+el.masa+'</span><span>'+el.config+'</span>'+
+       '<span>funde a '+el.fusionK+' K</span><span>descubierto '+el.anio+'</span></div>'+
+       '<div class="fuente">Datos validados contra '+
+       '<a href="'+el.pubchem+'" target="_blank" rel="noopener">PubChem ↗</a>'+
+       ' — NCBI / National Library of Medicine</div>';
+  mostrarEnVisor('el:'+el.simbolo, ()=>construirAtomo(el));
+  $('infoCuerpo').innerHTML = h;
+  $('infoCuerpo').className = '';
+}
+
+/* ── 7. DIBUJO 2D ──────────────────────────────────────────────── */
+/* Halo cacheado en un canvas fuera de pantalla. Antes cada destello creaba
+   su createRadialGradient en cada frame. Medido con 60 destellos en cuadro:
+   0.145 ms por frame antes, 0.060 ms ahora (2.4x), y cero asignaciones.  */
+const cacheHalo = new Map(), cacheFicha = new Map();
+function spriteHalo(color){
+  let s = cacheHalo.get(color); if (s) return s;
+  s = document.createElement('canvas'); s.width = s.height = 64;
+  const g = s.getContext('2d'), rg = g.createRadialGradient(32,32,0,32,32,32);
+  rg.addColorStop(0,color); rg.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle = rg; g.fillRect(0,0,64,64);
+  cacheHalo.set(color,s); return s;
+}
+/* Las fichas NO usan sprite: medido, el drawImage reescalado sale más caro
+   que el degradado (0.15 ms frente a 0.11 ms por frame con 10 fichas). Lo que
+   sí se puede cachear es el propio objeto CanvasGradient, creándolo en un
+   espacio local (centro 0,0 y radio 100) y llevando la ficha hasta él con la
+   matriz. Cero asignaciones por frame y encima es la variante más rápida.  */
+function gradFicha(color){
+  let g = cacheFicha.get(color); if (g) return g;
+  g = cx.createRadialGradient(-30,-35,10, 0,0,100);
+  g.addColorStop(0,'#ffffff'); g.addColorStop(0.28,color); g.addColorStop(1,color);
+  cacheFicha.set(color,g); return g;
+}
+
+function dibujar(){
+  const sx = S.sacudida ? RAND(-S.sacudida,S.sacudida) : 0;
+  const sy = S.sacudida ? RAND(-S.sacudida,S.sacudida) : 0;
+  // la sacudida entra en la propia matriz, para no meter la pila de estado
+  // en el camino caliente. Medido, la diferencia es de 0.4 ns por llamada:
+  // irrelevante una vez por frame. Se hace así por claridad, no por velocidad.
+  S.sacX = sx; S.sacY = sy;      // dibujarFicha necesita rehacer esta matriz
+  cx.setTransform(S.dpr,0,0,S.dpr, sx*S.dpr, sy*S.dpr);
+  cx.clearRect(-30,-30,S.W+60,S.H+60);
+  dibujarVaso();
+  dibujarMesa();
+  for (let i=0;i<nDest;i++){
+    const d = destellos[i];
+    cx.globalAlpha = d.vida*0.5;
+    cx.drawImage(spriteHalo(d.color), d.x-d.r, d.y-d.r, d.r*2, d.r*2);
+  }
+  for (let i=0;i<nPart;i++){
+    const p = particulas[i];
+    cx.globalAlpha = p.vida<0?0:p.vida; cx.fillStyle = p.color;
+    cx.beginPath(); cx.arc(p.x,p.y,p.r,0,7); cx.fill();
+  }
+  cx.globalAlpha=1;
+  for (const f of S.fichas) if (f!==S.agarrada) dibujarFicha(f);
+  if (S.agarrada) dibujarFicha(S.agarrada);
+  dibujarPuntero();
+}
+function trazoVaso(v){
+  cx.beginPath();
+  cx.moveTo(v.x, v.y); cx.lineTo(v.x, v.y+v.h-24);
+  cx.quadraticCurveTo(v.x, v.y+v.h, v.x+24, v.y+v.h);
+  cx.lineTo(v.x+v.w-24, v.y+v.h);
+  cx.quadraticCurveTo(v.x+v.w, v.y+v.h, v.x+v.w, v.y+v.h-24);
+  cx.lineTo(v.x+v.w, v.y);
+}
+function dibujarVaso(){
+  const v = S.vaso, supY = v.y + v.h*0.30;
+  cx.save(); trazoVaso(v); cx.clip();
+  const g = cx.createLinearGradient(0,supY,0,v.y+v.h);
+  g.addColorStop(0,'rgba(80,170,255,.42)'); g.addColorStop(1,'rgba(30,90,190,.62)');
+  cx.fillStyle=g; cx.beginPath(); cx.moveTo(v.x, supY);
+  const amp = Math.min(13, S.agua.olas);
+  for (let x=0;x<=v.w;x+=6) cx.lineTo(v.x+x, supY+Math.sin(x*0.045+S.agua.nivel)*amp*0.5);
+  cx.lineTo(v.x+v.w, v.y+v.h); cx.lineTo(v.x, v.y+v.h); cx.closePath(); cx.fill();
+  cx.restore();
+  cx.strokeStyle='rgba(190,215,255,.55)'; cx.lineWidth=2.5; trazoVaso(v); cx.stroke();
+  cx.fillStyle='rgba(190,215,255,.6)'; cx.font='600 13px system-ui'; cx.textAlign='center';
+  cx.fillText('H₂O', v.x+v.w/2, v.y+v.h+21);
+}
+function dibujarFicha(f){
+  const el=f.el;
+  const cerca = Math.hypot(f.x-puntero.x, f.y-puntero.y) < f.r*2.1;
+  f.escala += ((cerca||f===S.agarrada ? 1.16 : 1) - f.escala)*0.18;
+  const r = f.r*f.escala;
+  if (cerca||f===S.agarrada){
+    cx.globalAlpha=.28; cx.fillStyle=colorDe(el);
+    cx.beginPath(); cx.arc(f.x,f.y,r*1.55,0,7); cx.fill(); cx.globalAlpha=1;
+  }
+  // se lleva la ficha al espacio del degradado cacheado y se vuelve
+  const k = r/100, d = S.dpr;
+  cx.setTransform(d*k,0,0,d*k, (f.x+S.sacX)*d, (f.y+S.sacY)*d);
+  cx.fillStyle = gradFicha(colorDe(el));
+  cx.beginPath(); cx.arc(0,0,100,0,7); cx.fill();
+  cx.setTransform(d,0,0,d, S.sacX*d, S.sacY*d);
+  cx.strokeStyle = S.descubiertos.has(el.simbolo)?'rgba(55,214,122,.9)':'rgba(255,255,255,.35)';
+  cx.lineWidth=2; cx.beginPath(); cx.arc(f.x,f.y,r,0,7); cx.stroke();
+  cx.fillStyle='#0a1020'; cx.font='700 '+(r*0.8)+'px system-ui';
+  cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillText(el.simbolo, f.x, f.y+1);
+  /* Con 19 fichas en dos columnas, 19 etiquetas fijas son ruido y encima la
+     de la columna interior se montaría sobre la exterior. Se muestra solo la
+     del elemento apuntado, y alineada al borde del estante. */
+  if (cerca || f===S.agarrada){
+    cx.textAlign='right'; cx.fillStyle='rgba(220,232,255,.85)'; cx.font='12px system-ui';
+    cx.fillText(el.nombre, S.estanteIzq - 10, f.y+1);
+  }
+}
+function dibujarPuntero(){
+  if (!puntero.visto) return;
+  cx.strokeStyle = puntero.activo?'#37d67a':'rgba(160,190,240,.75)';
+  cx.lineWidth = puntero.activo?3:2;
+  cx.beginPath(); cx.arc(puntero.x,puntero.y, puntero.activo?11:16,0,7); cx.stroke();
+  cx.beginPath(); cx.arc(puntero.x,puntero.y,2.5,0,7); cx.fillStyle=cx.strokeStyle; cx.fill();
+}
+
+/* ── 8. FÍSICA ─────────────────────────────────────────────────── */
+function fisica(){
+  S.agua.nivel += 0.055; S.agua.olas *= 0.955;
+  S.sacudida *= 0.88; if (S.sacudida<0.15) S.sacudida=0;
+  S.reaccionando *= 0.97;
+  if (S.mesa && S.mesa.destello>0) S.mesa.destello *= 0.93;
+  for (let i=nPart-1;i>=0;i--){
+    const p=particulas[i]; p.x+=p.vx; p.y+=p.vy;
+    if (p.tipo==='chispa'){ p.vy+=0.13; p.vx*=0.985; } else { p.vy-=0.035; p.vx*=0.98; }
+    p.vida-=0.017;
+    if (p.vida<=0){ particulas[i]=particulas[nPart-1]; particulas[nPart-1]=p; nPart--; }
+  }
+  for (let i=nDest-1;i>=0;i--){
+    const d=destellos[i]; d.vida-=0.045; d.r*=1.03;
+    if (d.vida<=0){ destellos[i]=destellos[nDest-1]; destellos[nDest-1]=d; nDest--; }
+  }
+}
+
+/* ── 9. CARBONITO: camina por el fondo, alrededor del usuario ──── */
+const PISTAS = [
+  '¡Hola! Soy <b>Carbonito</b>. Arrastra un átomo de la columna hasta el vaso.',
+  'Prueba el <b>Sodio</b> primero. Es el clásico de los videos de química.',
+  'Ahora el <b>Cesio</b>. Al bajar en el grupo 1 la cosa se pone seria.',
+  '¿Y si tiras un <b>gas noble</b>? Fíjate bien en lo que NO pasa.',
+  'Truco: mientras más abajo está un alcalino, más lejos tiene su electrón… y más fácil lo suelta.',
+  'El <b>Magnesio</b> casi ni reacciona: tiene que soltar 2 electrones en vez de 1, y le cuesta el doble.',
+  'Prueba la <b>zona de enlace</b>: junta <b>Na</b> y <b>Cl</b> y verás salir la sal de tu cocina.',
+  'En la zona de enlace puedes soltar <b>el mismo átomo dos veces</b>. Al Ca le sobran 2 electrones… y cada F solo acepta 1.',
+  'Los gases nobles no sirven para enlazar: <b>ya están completos</b>. Por eso todos los demás quieren parecerse a ellos.'
+];
+let pistaIdx=0, globoTimer=null;
+
+/* Recorrido elíptico. Cuando habla se detiene y mira al frente. */
+const carbo = {
+  fase: 0,           // fase del ciclo de paso, avanza con la DISTANCIA recorrida
+  pausa: 0,          // ms mostrando globo de diálogo
+  susto: 0,          // se sobresalta con las reacciones
+  /* Hacia dónde mira el modelo "de fábrica". Tripo no garantiza que sea +Z,
+     y en este no lo es: MIDIENDO EL ESQUELETO se ve que mira a +X.
+       · los dedos de los dos pies caen en +X respecto al tobillo
+         (foot.L x=-0.024 → toe.L x=+0.045 ; foot.R x=-0.020 → toe.R x=+0.082)
+       · el eje de hombros corre por Z (shoulder.R z=-0.006 → shoulder.L z=-0.034),
+         y con arriba=+Y y izquierda=Y×adelante, eso solo cuadra con adelante=+X
+     La cámara está en +Z, así que para que mire al usuario hay que restarle
+     esos 90°. Con base=0 se le veía de perfil quieto y de espaldas al caminar
+     hacia la derecha. Se sigue pudiendo recalibrar en vivo con ← y →.        */
+  base: -Math.PI/2,
+  tamano: 1.5
+};
+
+/* ── CARBONITO COMO NPC ──────────────────────────────────────────
+   Camina siempre por el suelo, nunca flota. Se queda quieto mirando a
+   cámara; si nadie interactúa en 5 s, gira 90° a la izquierda, va hasta
+   la columna, coge un reactivo, lo lleva al vaso, lo suelta (dispara la
+   reacción de verdad) y vuelve a su sitio.                             */
+const NPC = {
+  estado:'quieto', tEstado:0, solto:false,
+  z: -0.55,                 // camina siempre en este plano: sin profundidad
+  x: 0, casaX: 0, objetivoX: 0,
+  rumbo: 0,                 // hacia dónde mira (radianes)
+  velocidad: 0.00085,       // unidades de mundo por ms: paso tranquilo
+  indice: 0, ficha: null, trasCaminar: 'quieto',
+  desdeX:0, desdeY:0, haciaX:0, haciaY:0
+};
+
+/* Convierte una X de pantalla a X de mundo en el plano donde camina. */
+function xDePantalla(px){
+  if (!mundoCam || !THREEref) return 0;
+  const dist = mundoCam.position.z - NPC.z;
+  const medioAncho = Math.tan(THREEref.MathUtils.degToRad(mundoCam.fov/2)) * dist * mundoCam.aspect;
+  return (px / S.W * 2 - 1) * medioAncho;
+}
+const _proy = { x:0, y:0 };
+function aPantalla(x, y, z){
+  const v = new THREEref.Vector3(x, y, z).project(mundoCam);
+  _proy.x = (v.x*0.5+0.5)*S.W; _proy.y = (-v.y*0.5+0.5)*S.H;
+  return _proy;
+}
+
+function pasarA(estado){ NPC.estado = estado; NPC.tEstado = 0; }
+
+/* Devuelve al estante cualquier ficha que Carbonito tuviera en la mano y
+   limpia la marca `npc`. Se llama al abandonar y al volver a reposo: barrer
+   TODAS las fichas (y no solo NPC.ficha) evita que una marca huérfana deje
+   un átomo intocable en mitad de la pantalla para siempre. */
+function soltarTodoNPC(){
+  for (const f of S.fichas) if (f.npc){ f.npc = false; volverACasa(f); }
+  NPC.ficha = null;
+}
+
+/* Cuánto gira para ponerse de perfil al caminar. El signo está comprobado
+   contra la orientación medida del esqueleto (ver carbo.base): con
+   rumbo = base + PERFIL*dir, caminando hacia +X el modelo acaba mirando a +X
+   y hacia -X mirando a -X, o sea que avanza siempre hacia donde mira.
+   Si algún día se cambia el modelo y se le ve la espalda, se invierte aquí. */
+const PERFIL = Math.PI/2;
+
+/* Mantiene un ángulo dentro de [-PI, PI]. Sin esto rotation.y se acumula
+   sin límite y las mezclas con rotation.x/z acaban dando volteretas. */
+function normalizarAngulo(a){
+  while (a >  Math.PI) a -= Math.PI*2;
+  while (a < -Math.PI) a += Math.PI*2;
+  return a;
+}
+
+/* Encadena: gira hacia el destino, camina de perfil y al llegar pasa al
+   estado indicado. El rumbo se fija UNA vez aquí; caminar no lo recalcula. */
+function irHacia(pxDestino, despues){
+  NPC.objetivoX = xDePantalla(pxDestino);
+  const dir = Math.sign(NPC.objetivoX - NPC.x) || 1;
+  NPC.rumbo = normalizarAngulo(carbo.base + PERFIL*dir);
+  NPC.trasCaminar = despues;
+  pasarA('girando');
+}
+
+/* Avanza hacia objetivoX sin tocar la orientación. Devuelve true al llegar. */
+function avanzarNPC(dt){
+  const d = NPC.objetivoX - NPC.x;
+  const paso = NPC.velocidad * dt;
+  if (Math.abs(d) <= paso){ NPC.x = NPC.objetivoX; return true; }
+  NPC.x += Math.sign(d) * paso;
+  carbo.fase += paso * 5.2;                   // la zancada avanza con la distancia
+  return false;
+}
+
+/* Cuánto le falta para acabar de girar (radianes). */
+function giroPendiente(){
+  return Math.abs(normalizarAngulo(NPC.rumbo - (carboMalla ? carboMalla.rotation.y : 0)));
+}
+
+/* Carbonito solo demuestra con lo que tiene reacción de agua: si cogiera un
+   halógeno lo llevaría al vaso para que el juego se lo devolviera. */
+function siguienteFicha(){
+  for (let i=0;i<S.fichas.length;i++){
+    const f = S.fichas[(NPC.indice+i) % S.fichas.length];
+    if (f.el.reaccion || f.el.noReacciona){ NPC.indice += i+1; return f; }
+  }
+  return null;
+}
+
+function actualizarNPC(dt){
+  NPC.tEstado += dt;
+  /* "Ocupado" = el usuario está AGARRANDO algo, no que haya una mano en
+     cuadro. S.ultimoMov se refresca en cada frame que el detector ve una
+     mano, así que usarlo aquí dejaba a Carbonito abortando para siempre. */
+  const ocupado = !!S.agarrada || (Date.now() - S.ultimaAccion) < 6000;
+  if (ocupado && NPC.estado !== 'quieto' && NPC.trasCaminar !== 'quieto'){
+    soltarTodoNPC();
+    irHacia(S.W*0.42, 'quieto');
+  }
+
+  switch (NPC.estado){
+    case 'quieto':
+      NPC.rumbo = carbo.base;                       // de frente a la cámara
+      if (NPC.tEstado < 60) soltarTodoNPC();        // red de seguridad al volver a reposo
+      if (!ocupado && NPC.tEstado > 5000){
+        NPC.ficha = siguienteFicha();
+        if (NPC.ficha){
+          NPC.ficha.npc = true;                     // que el usuario no la agarre
+          irHacia(NPC.ficha.casaX - 110, 'tomando');
+        }
+      }
+      break;
+
+    case 'girando':                                  // parado, girando en sitio
+      if (giroPendiente() < 0.12 || NPC.tEstado > 2000) pasarA('caminando');
+      break;
+
+    case 'caminando':                                // de perfil, sin recalcular rumbo
+      if (avanzarNPC(dt)){
+        // al llegar se pone de frente, salvo que vaya a lanzar
+        NPC.rumbo = (NPC.trasCaminar === 'lanzando')
+          ? normalizarAngulo(carbo.base - PERFIL)    // encarado al vaso
+          : carbo.base;
+        if (NPC.trasCaminar === 'lanzando'){
+          NPC.solto = false;
+          const m = aPantalla(NPC.x, -0.30 - BAJAR_CARBONITO, NPC.z);
+          NPC.desdeX = m.x; NPC.desdeY = m.y;        // sale de su mano
+          NPC.haciaX = S.vaso.x + S.vaso.w/2;        // cae al centro del agua
+          NPC.haciaY = S.vaso.y + S.vaso.h*0.45;
+        }
+        pasarA(NPC.trasCaminar);
+      }
+      break;
+
+    case 'tomando':                                  // la ficha vuela a su mano
+      if (NPC.tEstado > 950) irHacia(S.vaso.x + S.vaso.w + 150, 'lanzando');
+      break;
+
+    case 'lanzando': {
+      /* Vuelo en parábola, igual que lo lanzaría una persona. Se dibuja el
+         recorrido completo ANTES de disparar la reacción: si se soltara al
+         instante, el usuario no vería de dónde salió el átomo. */
+      if (NPC.ficha){
+        const u = Math.min(1, NPC.tEstado/620);
+        NPC.ficha.x = NPC.desdeX + (NPC.haciaX - NPC.desdeX)*u;
+        NPC.ficha.y = NPC.desdeY + (NPC.haciaY - NPC.desdeY)*u - Math.sin(u*Math.PI)*130;
+        if (u >= 1 && !NPC.solto){
+          NPC.solto = true;
+          NPC.ficha.npc = false;
+          lanzar(NPC.ficha);                         // ahora sí, la reacción
+          NPC.ficha = null;
+        }
+      }
+      if (NPC.tEstado > 2100) irHacia(S.W*0.42, 'quieto');
+      break;
+    }
+  }
+
+  // Mientras la lleva, la ficha va pegada a su mano
+  if (NPC.ficha && (NPC.estado==='tomando' || NPC.estado==='girando' ||
+      (NPC.estado==='caminando' && NPC.trasCaminar==='lanzando'))){
+    const m = aPantalla(NPC.x, -0.35, NPC.z);
+    NPC.ficha.x += (m.x - NPC.ficha.x) * 0.22;
+    NPC.ficha.y += (m.y - NPC.ficha.y) * 0.22;
+  }
+}
+
+/* Calibración de orientación: flechas ← → mientras Carbonito está en pantalla */
+window.addEventListener('keydown', ev=>{
+  if (!carboOK || FERIA) return;          // en feria no se toca nada por teclado
+  if (ev.key!=='ArrowLeft' && ev.key!=='ArrowRight') return;
+  carbo.base += (ev.key==='ArrowLeft' ? -1 : 1) * Math.PI/12;   // pasos de 15°
+  const grados = Math.round(carbo.base*180/Math.PI);
+  carbo.pausa = 2500;                       // afloja el paso y mira al frente
+  avisar('Orientación de Carbonito: '+grados+'°  (base: '+carbo.base.toFixed(4)+')');
+  console.log('[lab] carbo.base =', carbo.base, '=', grados+'°');
+  ev.preventDefault();
+});
+
+function hablar(html, ms){
+  const g=$('globo'); g.innerHTML=html; g.classList.add('ver');
+  carbo.pausa = ms||5000;                       // se detiene mientras habla
+  clearTimeout(globoTimer);
+  globoTimer=setTimeout(()=>g.classList.remove('ver'), ms||5000);
+}
+
+let carboOK=false, carboMalla=null, mundoRender=null, mundoEscena=null, mundoCam=null, THREEref=null;
+/* Si el GLB trae animaciones horneadas se usan; si no, se anima por código.
+   Así basta con reemplazar carbonito.glb por uno riggeado y funciona solo. */
+let carboMixer=null, carboAcciones={}, carboActual=null, carboClips=[], carboEsqueleto=null;
+let carboSombra=null;
+/* Materiales cacheados al cargar. Se usan para fijar la opacidad una sola
+   vez; ya no se escriben por frame. */
+const carboMats = [];
+/* Cuánto se baja a Carbonito para que no quede a la altura de la cara del
+   usuario en el encuadre de la webcam. En unidades de mundo: a su distancia
+   de cámara, 1 unidad ≈ 240 px de pantalla. */
+const BAJAR_CARBONITO = 0.50;
+const Y_CARBONITO = -0.72 - BAJAR_CARBONITO;   // su centro
+const SUELO = -1.47 - BAJAR_CARBONITO;         // el piso: donde quedan sus pies
+
+function clipQueCoincida(claves){
+  for (const k of claves)
+    for (const nombre in carboAcciones)
+      if (nombre.includes(k)) return carboAcciones[nombre];
+  return null;
+}
+function primeraAccion(){
+  const k = Object.keys(carboAcciones)[0];
+  return k ? carboAcciones[k] : null;
+}
+function ponerClip(accion){
+  if (!accion || accion===carboActual) return;
+  accion.reset().fadeIn(0.35).play();
+  if (carboActual) carboActual.fadeOut(0.35);
+  carboActual = accion;
+}
+
+async function cargarCarbonito(){
+  try{
+    avisar('Cargando a Carbonito…');
+    const THREE = await import('three');            THREEref = THREE;
+    const { GLTFLoader }    = await import('three/addons/loaders/GLTFLoader.js');
+    // El GLB viene de gltfpack -> exige EXT_meshopt_compression.
+    // Sin este decodificador GLTFLoader lanza "Unknown extension" y no carga nada.
+    const { MeshoptDecoder } = await import('three/addons/libs/meshopt_decoder.module.js');
+
+    mundoRender = new THREE.WebGLRenderer({ canvas:$('mundo3d'), alpha:true, antialias:true });
+    mundoRender.setPixelRatio(Math.min(devicePixelRatio,2));
+    mundoRender.setSize(S.W, S.H, false);
+    mundoRender.autoClear = false;   // los clear se gestionan a mano (visor + escena)
+
+    mundoEscena = new THREE.Scene();
+    mundoCam = new THREE.PerspectiveCamera(42, S.W/S.H, 0.1, 100);
+    mundoCam.position.set(0, 0.55, 5.2);
+    mundoCam.lookAt(0, -0.25, 0);
+
+    mundoEscena.add(new THREE.AmbientLight(0xffffff, 2.0));
+    const luz=new THREE.DirectionalLight(0xffffff,2.4); luz.position.set(2,4,3); mundoEscena.add(luz);
+    const rel=new THREE.DirectionalLight(0x6aa8ff,1.3); rel.position.set(-3,-1,2); mundoEscena.add(rel);
+
+    const cargador = new GLTFLoader();
+    cargador.setMeshoptDecoder(MeshoptDecoder);
+
+    /* Se prefiere la version comprimida (meshopt + texturas 1K, 4.1 MB frente
+       a los 83.9 MB del original). Si alguien copia la carpeta sin ese
+       archivo, cae al original y el prototipo sigue abriendo igual.        */
+    const CANDIDATOS = ['carbonito.opt.glb', 'carbonito.glb'];
+    let gltf = null, usado = '', bytes = 0;
+    for (const url of CANDIDATOS){
+      try{
+        gltf = await cargador.loadAsync(url, e=>{
+          bytes = e.total || e.loaded;
+          if (e.lengthComputable) avisar('Cargando a Carbonito… '+Math.round(e.loaded/e.total*100)+'%');
+        });
+        usado = url; break;
+      }catch(err){
+        console.warn('[lab] no pude cargar', url, '->', err.message||err);
+      }
+    }
+    if (!gltf) throw new Error('ninguno de estos modelos cargo: '+CANDIDATOS.join(', '));
+    const MB = bytes/1048576;
+    console.log('[lab] modelo usado:', usado, '-', MB.toFixed(2), 'MB descargados');
+    if (MB > 5){
+      console.warn('[lab] '+usado+' pesa '+MB.toFixed(1)+' MB (objetivo < 5 MB). Recomprime con: '+
+        'npx @gltf-transform/cli optimize carbonito.glb carbonito.opt.glb --compress meshopt --simplify-ratio 0.12');
+      avisar('Aviso: Carbonito pesa '+MB.toFixed(1)+' MB, mas de lo previsto (ver consola).','err');
+    }
+
+    // Autoencuadre: viene de Tripo, no sabemos su escala ni su centro
+    const bruto = gltf.scene;
+    const caja = new THREE.Box3().setFromObject(bruto);
+    const tam = caja.getSize(new THREE.Vector3());
+    const centro = caja.getCenter(new THREE.Vector3());
+    const k = carbo.tamano/Math.max(tam.x, tam.y, tam.z);
+    bruto.scale.setScalar(k);
+    bruto.position.sub(centro.multiplyScalar(k));
+
+    // envoltorio: así puedo mover/rotar sin pelearme con el centrado
+    carboMalla = new THREE.Group();   // el envoltorio se escala en la animación
+    carboMalla.add(bruto);
+    mundoEscena.add(carboMalla);
+
+    // Sombra de contacto: sin esto parece que levita
+    carboSombra = new THREE.Mesh(
+      new THREE.CircleGeometry(0.38, 32),
+      new THREE.MeshBasicMaterial({ color:0x000000, transparent:true, opacity:0.3, depthWrite:false })
+    );
+    carboSombra.rotation.x = -Math.PI/2;
+    mundoEscena.add(carboSombra);
+
+    if (gltf.animations && gltf.animations.length){
+      carboMixer = new THREE.AnimationMixer(bruto);
+      carboClips = gltf.animations.map(c=>c.name);
+      gltf.animations.forEach(c=>{ carboAcciones[(c.name||'clip').toLowerCase()] = carboMixer.clipAction(c); });
+      console.log('[lab] Carbonito trae', gltf.animations.length, 'animación(es):', carboClips);
+    } else {
+      // ¿tiene esqueleto aunque no traiga clips? Entonces le movemos los huesos.
+      let conSkin=false;
+      bruto.traverse(o=>{ if(o.isSkinnedMesh) conSkin=true; });
+      if (conSkin){
+        const todos=[]; bruto.traverse(o=>{ if(o.isBone) todos.push(o.name); });
+        console.log('[lab] huesos en el modelo ('+todos.length+'):', todos.join(', '));
+        const H={}, noHallados=[];
+        ['thigh.L','thigh.R','shin.L','shin.R','foot.L','foot.R','upper_arm.L','upper_arm.R',
+         'forearm.L','forearm.R','hand.L','hand.R','spine','spine.003','head','neck']
+          .forEach(n=>{ const b=buscarHueso(bruto,n); if(b) H[n]=b; else noHallados.push(n); });
+        if (Object.keys(H).length>=4){
+          carboEsqueleto={ h:H, reposo:{} };
+          for (const k in H) carboEsqueleto.reposo[k]=H[k].rotation.clone();
+          console.log('[lab] Caminata procedural sobre', Object.keys(H).length,
+                      'huesos:', Object.keys(H).join(', '));
+          if (noHallados.length) console.log('[lab] (no están, se omiten):', noHallados.join(', '));
+        } else {
+          console.warn('[lab] Hay skin pero no reconocí los nombres de huesos. Encontrados:',
+                       Object.keys(H), '| disponibles:', todos);
+        }
+      } else {
+        console.log('[lab] Sin esqueleto utilizable: animación por código (squash & stretch).');
+      }
+    }
+
+    let tris=0;
+    carboMats.length = 0;
+    bruto.traverse(o=>{
+      if (o.isMesh && o.geometry){
+        tris += (o.geometry.index?o.geometry.index.count:o.geometry.attributes.position.count)/3;
+        const mats = Array.isArray(o.material)?o.material:[o.material];
+        mats.forEach(m=>{ if(m){ m.transparent=true; m.depthWrite=true; carboMats.push(m); } });
+      }
+    });
+    ajustarRecorrido();
+    NPC.x = NPC.casaX; NPC.rumbo = carbo.base;
+    for (let i=0;i<carboMats.length;i++) carboMats[i].opacity = 1;
+    carboOK = true;
+    avisar(carboMixer   ? 'Listo. Carbonito con animación propia ('+carboClips.join(', ')+').'
+         : carboEsqueleto ? 'Listo. Carbonito camina con sus huesos (caminata procedural).'
+         : 'Listo. Carbonito pasea por el fondo (animación por código).','ok');
+    console.log('[lab] Carbonito:', Math.round(tris).toLocaleString(), 'triángulos. Sin animaciones baked: camina por código.');
+  }catch(err){
+    console.error('[lab] Carbonito no cargó:', err);
+    const m = location.protocol==='file:'
+      ? 'Carbonito necesita servidor local (npx serve).'
+      : 'Carbonito no cargó: '+(err.message||err)+' (ver consola)';
+    avisar(m+' El juego funciona igual.','err');
+  }
+}
+
+/* Caminata procedural sobre huesos. Se usa cuando el modelo TIENE esqueleto
+   pero no trae clips. Los ejes dependen de cómo quedó orientado el rig al
+   exportar: si alguna articulación gira raro, se cambia aquí y ya. */
+const PASO = {
+  frecuencia: 0.0075,   // velocidad del ciclo
+  muslo:  { eje:'x', amp: 0.55 },
+  rodilla:{ eje:'x', amp: 0.70 },
+  brazo:  { eje:'x', amp: 0.40 },
+  codo:   { eje:'x', amp: 0.25 },
+  torso:  { eje:'y', amp: 0.09 }
+};
+
+/* Three.js sanea los nombres al cargar: quita [ ] . : / y cambia espacios
+   por _. Así que "thigh.L" queda como "thighL". Hay que buscar las dos. */
+function buscarHueso(raiz, nombre){
+  const limpio = nombre.replace(/[\[\]\.:\/]/g,'').replace(/\s/g,'_');
+  return raiz.getObjectByName(nombre) || raiz.getObjectByName(limpio) || null;
+}
+
+function girarHueso(nombre, eje, valor){
+  const E = carboEsqueleto; if (!E) return;
+  const b = E.h[nombre]; if (!b) return;
+  b.rotation[eje] = E.reposo[nombre][eje] + valor;
+}
+
+function caminarConHuesos(fase, intensidad){
+  const a = intensidad;
+  const s = Math.sin(fase);
+  const flexion = x => Math.max(0, x);     // la rodilla solo dobla hacia un lado
+
+  girarHueso('thigh.L', PASO.muslo.eje,  s * PASO.muslo.amp * a);
+  girarHueso('thigh.R', PASO.muslo.eje, -s * PASO.muslo.amp * a);
+  girarHueso('shin.L',  PASO.rodilla.eje, flexion(-s) * PASO.rodilla.amp * a);
+  girarHueso('shin.R',  PASO.rodilla.eje, flexion( s) * PASO.rodilla.amp * a);
+  // brazos en contrafase con las piernas, como al caminar de verdad
+  girarHueso('upper_arm.L', PASO.brazo.eje, -s * PASO.brazo.amp * a);
+  girarHueso('upper_arm.R', PASO.brazo.eje,  s * PASO.brazo.amp * a);
+  girarHueso('forearm.L', PASO.codo.eje, flexion(-s) * PASO.codo.amp * a);
+  girarHueso('forearm.R', PASO.codo.eje, flexion( s) * PASO.codo.amp * a);
+  girarHueso('spine', PASO.torso.eje, s * PASO.torso.amp * a);
+}
+
+let tPrev = 0;
+function animarCarbonito(tms){
+  if (!carboOK || !carboMalla) return;
+  const dt = Math.min(50, tms - tPrev); tPrev = tms;
+
+  if (carbo.pausa > 0) carbo.pausa -= dt;
+  actualizarNPC(dt);
+
+  const x = NPC.x, z = NPC.z;
+  const andando = (NPC.estado==='caminando');
+  const ritmo = andando ? 1 : 0.16;         // parado: solo respira, NO flota
+  carbo.susto *= 0.93;
+  let inclina = 0;
+
+  if (carboMixer){
+    /* A — el modelo trae su propio ciclo de animación */
+    carboMixer.update(dt/1000);
+    ponerClip(andando
+      ? (clipQueCoincida(['walk','camin','run','anda','move']) || primeraAccion())
+      : (clipQueCoincida(['idle','stand','quiet','espera','wave','talk']) || primeraAccion()));
+    carboMalla.position.set(x, Y_CARBONITO + carbo.susto*0.55, z);
+    carboMalla.scale.set(1,1,1);
+    carboMalla.rotation.z = 0;
+
+  } else if (carboEsqueleto){
+    /* C — tiene esqueleto pero no clips: le movemos los huesos nosotros */
+    caminarConHuesos(carbo.fase, ritmo);
+    // dos rebotes por zancada (uno por pie). Parado el rebote es casi nulo:
+    // los pies no deben despegarse del suelo.
+    const rebote = andando ? Math.abs(Math.sin(carbo.fase))*0.05 : 0;
+    carboMalla.position.set(x, Y_CARBONITO + rebote + carbo.susto*0.55, z);
+    carboMalla.scale.set(1,1,1);
+    carboMalla.rotation.z = andando ? Math.sin(carbo.fase)*0.03 : 0;
+    inclina = andando ? 0.07 : 0;
+
+  } else {
+    /* B — sin esqueleto: se anima el cuerpo entero con SQUASH & STRETCH,
+       el principio clásico: se estira al despegar, se aplasta al aterrizar. */
+    let altura=0, estY=1, estXZ=1;
+    if (andando){
+      const ciclo = (carbo.fase/(Math.PI*2)) % 1;
+      if (ciclo < 0.72){
+        const u = ciclo/0.72;
+        altura = Math.sin(u*Math.PI) * 0.30;
+        const estiron = Math.sin(u*Math.PI*2);
+        estY  = 1 + estiron*0.10;
+        estXZ = 1 - estiron*0.07;
+      } else {
+        const aplasta = Math.sin(((ciclo-0.72)/0.28)*Math.PI);
+        estY  = 1 - aplasta*0.20;
+        estXZ = 1 + aplasta*0.13;
+      }
+      inclina = 0.13;
+    } else {
+      altura = Math.sin(tms*0.0018)*0.045;
+      estY   = 1 + Math.sin(tms*0.0018)*0.018;
+      estXZ  = 1 - Math.sin(tms*0.0018)*0.012;
+    }
+    carboMalla.position.set(x, Y_CARBONITO + altura + carbo.susto*0.55, z);
+    carboMalla.scale.set(estXZ, estY, estXZ);
+    carboMalla.rotation.z = andando ? Math.sin(carbo.fase)*0.05 : 0;
+  }
+
+  orientar(inclina);
+  moverSombra(x, z);
+  situarGlobo(x, z);
+}
+
+/* Pinta la escena 3D principal. Va aparte de animarCarbonito porque el visor
+   del panel tiene que funcionar aunque Carbonito no haya cargado. */
+function pintarMundo(tms){
+  if (!mundoRender) return;
+  animarVisor(tms);                       // primero la esquina, y se copia
+  mundoRender.setScissorTest(false);
+  mundoRender.setViewport(0,0,S.W,S.H);
+  mundoRender.clear();                    // borra la esquina
+  mundoRender.render(mundoEscena, mundoCam);
+}
+
+/* Gira suavemente hacia NPC.rumbo por el camino más corto. */
+function orientar(inclina){
+  const d = normalizarAngulo(NPC.rumbo - carboMalla.rotation.y);
+  // se acota en cada frame: si rotation.y crece sin límite, al combinarse
+  // con rotation.x/z en orden XYZ termina dando tumbos
+  carboMalla.rotation.y = normalizarAngulo(
+    Math.abs(d) < 0.01 ? NPC.rumbo : carboMalla.rotation.y + d*0.12);
+  carboMalla.rotation.x = inclina*0.6 + carbo.susto*0.25;
+}
+
+/* Su sitio de reposo: a la derecha del vaso, sin tapar nada. */
+function ajustarRecorrido(){
+  if (!mundoCam || !THREEref) return;
+  NPC.casaX = xDePantalla(S.W*0.42);
+  if (NPC.estado === 'quieto') NPC.x = NPC.casaX;
+  console.log('[lab] sitio de reposo de Carbonito en x =', NPC.casaX.toFixed(2));
+}
+
+/* sombra de contacto: se achica y se aclara cuando despega del suelo */
+function moverSombra(x, z){
+  if (!carboSombra) return;
+  carboSombra.position.set(x, SUELO+0.01, z);
+  const alto = Math.max(0, carboMalla.position.y - Y_CARBONITO);
+  const k = Math.max(0.55, 1 - alto*1.6);
+  carboSombra.scale.setScalar(k);
+  carboSombra.material.opacity = 0.30*k;
+}
+
+/* Ya no hay desvanecido por profundidad: Carbonito camina siempre en el
+   mismo plano, así que la opacidad se fija una vez al cargar y no se toca
+   en ningún frame. Un bucle menos. */
+
+/* el globo de diálogo sigue su cabeza en pantalla */
+let vecGlobo = null;   // uno de modulo: antes era un Vector3 nuevo por frame
+function situarGlobo(x, z){
+  const g = $('globo');
+  if (!g.classList.contains('ver') || !THREEref) return;
+  if (!vecGlobo) vecGlobo = new THREEref.Vector3();
+  const v = vecGlobo.set(x, carboMalla.position.y + 1.05, z).project(mundoCam);
+  g.style.left = Math.max(150, Math.min(S.W-150, (v.x*0.5+0.5)*S.W))+'px';
+  g.style.top  = Math.max(90,  Math.min(S.H-40,  (-v.y*0.5+0.5)*S.H))+'px';
+}
+
+function revisarInactividad(){
+  if (Date.now() - S.ultimoMov > 7000){
+    hablar(PISTAS[pistaIdx % PISTAS.length], 6000);
+    pistaIdx++; S.ultimoMov = Date.now()+6000;
+  }
+}
+setInterval(revisarInactividad, 1500);
+
+/* ── 10. CÁMARA: MediaPipe Tasks Vision, versión FIJADA ────────── */
+const MP_VER='0.10.14';   // sin fijar versión, el CDN rompe el proyecto solo
+const MODELO_GESTOS = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
+const MODELO_MANOS  = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+/* 'gestos' = GestureRecognizer (clasificador entrenado + landmarks)
+   'landmarks' = HandLandmarker de siempre, si el otro no carga.            */
+let detector=null, camActiva=false, ultimoT=-1, modoDetector='';
+
+/* Encender la cámara es una función aparte, y no el cuerpo del clic, porque
+   el modo feria necesita poder reintentarlo solo cuando se pierde el aparato. */
+async function encenderCamara(){
+  const btn=$('btnCam'); btn.disabled=true; avisar('Cargando MediaPipe…');
+  if (location.protocol==='file:'){
+    avisar('La cámara necesita servidor local. En esta carpeta ejecuta:  npx serve  y abre la dirección que aparezca.','err');
+    btn.disabled=false; return;
+  }
+  try{
+    const mod = await Promise.race([
+      import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@'+MP_VER+'/vision_bundle.mjs'),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout de 15 s cargando MediaPipe')),15000))
+    ]);
+    const { FilesetResolver, HandLandmarker, GestureRecognizer } = mod;
+    const fs = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@'+MP_VER+'/wasm');
+    /* GestureRecognizer devuelve LOS MISMOS 21 landmarks que HandLandmarker y
+       encima una clasificación de gesto ya entrenada: es un superconjunto, así
+       que se intenta primero. Si no carga (CDN caído, GPU rara, lo que sea) se
+       sigue con el de siempre en vez de dejar al usuario sin cámara.        */
+    try{
+      detector = await GestureRecognizer.createFromOptions(fs,{
+        baseOptions:{ modelAssetPath:MODELO_GESTOS, delegate:'GPU' },
+        runningMode:'VIDEO', numHands:2 });
+      modoDetector = 'gestos';
+    }catch(errG){
+      console.warn('[lab] GestureRecognizer no cargó, se sigue con HandLandmarker:', errG.message||errG);
+      avisar('El clasificador de gestos no cargó; se usa el cálculo geométrico. Todo sigue funcionando.','err');
+      detector = await HandLandmarker.createFromOptions(fs,{
+        baseOptions:{ modelAssetPath:MODELO_MANOS, delegate:'GPU' },
+        runningMode:'VIDEO', numHands:2 });
+      modoDetector = 'landmarks';
+    }
+    console.log('[lab] detector:', modoDetector==='gestos'
+      ? 'GestureRecognizer — manda el clasificador, con la geometría de respaldo cuando devuelve None'
+      : 'HandLandmarker — manda la geometría (el clasificador no está disponible)');
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ width:{ideal:640}, height:{ideal:480} } });
+    const v=$('video'); v.srcObject=stream; await v.play(); v.style.display='block';
+    camActiva=true; puntero.fuente='mano';
+    // la primera mano que aparezca coloca el puntero de golpe: si no, vendría
+    // deslizándose desde donde quedó el ratón y podría agarrar de camino
+    pinza.saltar=true; pinza.perdidos=99; pinza.recuperando=false; manoMando=-1;
+    $('modoTxt').textContent='Modo mano'; $('puntoModo').style.background='#37d67a';
+    btn.textContent='Volver a ratón'; btn.disabled=false;
+    avisar('Cámara activa. Mano abierta = mover · índice levantado = agarrar.','ok');
+    hablar('¡Ahora con las manos! Mano abierta para moverte, y <b>levanta el índice</b> para agarrar.',8000);
+  }catch(err){
+    console.error('[lab] cámara:', err);
+    let m = err.message||String(err);
+    if (err.name==='NotAllowedError') m='bloqueaste el permiso. Habilítalo en el candado de la barra de direcciones.';
+    if (err.name==='NotFoundError')   m='no se encontró ninguna cámara conectada.';
+    avisar('No se pudo activar la cámara: '+m+' — El modo ratón sigue funcionando.','err');
+    apagarCamara(); $('btnCam').disabled=false;
+  }
+}
+$('btnCam').addEventListener('click', ()=>{
+  if (camActiva){ apagarCamara(); return; }
+  encenderCamara();
+});
+function apagarCamara(){
+  const v=$('video');
+  if (v.srcObject){ v.srcObject.getTracks().forEach(t=>t.stop()); v.srcObject=null; }
+  v.style.display='none';
+  camActiva=false; puntero.fuente='raton'; puntero.activo=false;
+  // las manos dejan de existir: la capa RGB se limpia sola en el próximo frame
+  for (let i=0;i<2;i++){
+    const M=manos[i];
+    M.viva=false; M.detectada=false; M.perdidos=99; M.llenas=0; M.brillo=0; M.senalando=false; M.confirma=0;
+  }
+  manoMando=-1; ultimoT=-1;
+  pinza.perdidos=99; pinza.cerrada=false; pinza.recuperando=false; pinza.saltar=true;
+  pinza.tPrev=0; oeX.listo=false; oeY.listo=false;
+  $('modoTxt').textContent='Modo ratón'; $('puntoModo').style.background='#4da3ff';
+  $('btnCam').textContent='Activar cámara';
+}
+
+/* ── 10.b LAS DOS MANOS ─────────────────────────────────────────
+   MediaPipe NO garantiza que el orden del array sea estable entre frames.
+   Por eso cada mano detectada se engancha a una "ranura" fija emparejando
+   por cercanía de la muñeca con el frame anterior: sin esto el mando salta
+   de una mano a la otra a mitad de un arrastre y la ficha se va volando. */
+const N_PUNTOS = 21, N_ESTELA = 10;
+const YEMAS = [4, 8, 12, 16, 20];
+
+/* Huesos aplanados en [a, b, dedo] para recorrerlos sin crear iteradores. */
+const HUESOS = [
+  0,1,0,   1,2,0,   2,3,0,   3,4,0,        // pulgar
+  0,5,1,   5,6,1,   6,7,1,   7,8,1,        // índice
+  9,10,2,  10,11,2, 11,12,2,               // medio
+  13,14,3, 14,15,3, 15,16,3,               // anular
+  0,17,4,  17,18,4, 18,19,4, 19,20,4,      // meñique
+  5,9,5,   9,13,5,  13,17,5                // palma
+];
+/* A qué dedo pertenece cada punto (5 = palma / muñeca). */
+const DEDO_DE = [5, 0,0,0,0, 1,1,1,1, 2,2,2,2, 3,3,3,3, 4,4,4,4];
+
+/* Ranuras fijas: se reservan al arrancar y no se vuelve a asignar memoria
+   por frame. Los Float32Array evitan además crear objetos por landmark.  */
+const manos = [];
+for (let i=0;i<2;i++) manos.push({
+  viva:false, detectada:false, perdidos:99, senalando:false, ext:[false,false,false,false], confirma:0, tam:0, lado:'',
+  gesto:'', fuente:'', fuentePrev:'', metros:0,
+  lx:new Float32Array(N_PUNTOS), ly:new Float32Array(N_PUNTOS),   // 0..1 del vídeo
+  tx:new Float32Array(N_PUNTOS), ty:new Float32Array(N_PUNTOS),   // objetivo en píxeles
+  px:new Float32Array(N_PUNTOS), py:new Float32Array(N_PUNTOS),   // lo que se dibuja
+  ex:new Float32Array(5*N_ESTELA), ey:new Float32Array(5*N_ESTELA),
+  cursor:0, llenas:0, brillo:0
+});
+
+/* El vídeo se pinta con object-fit:cover y espejado en X. Para que el
+   esqueleto caiga EXACTAMENTE sobre la imagen hay que repetir ese recorte
+   aquí: si se estirara 0..1 sobre la pantalla, en cuanto la ventana dejara
+   de tener la proporción 4:3 del vídeo el dibujo se despegaría de la mano. */
+const encuadre = { k:1, offX:0, offY:0, vw:640, vh:480 };
+function calcularEncuadre(){
+  const v = $('video');
+  const vw = v.videoWidth || 640, vh = v.videoHeight || 480;
+  const k = Math.max(S.W/vw, S.H/vh);          // cover: la escala mayor
+  encuadre.k = k; encuadre.vw = vw; encuadre.vh = vh;
+  encuadre.offX = (S.W - vw*k)/2;
+  encuadre.offY = (S.H - vh*k)/2;
+}
+$('video').addEventListener('loadedmetadata', calcularEncuadre);
+const aPantallaX = lx => encuadre.offX + (1-lx)*encuadre.vw*encuadre.k;   // espejo en X
+const aPantallaY = ly => encuadre.offY + ly*encuadre.vh*encuadre.k;
+
+/* ── FILTRO ONE EURO ────────────────────────────────────────────
+   Sustituye al LERP de factor fijo que había antes. El LERP tiene un problema
+   que no se arregla ajustándolo: con factor alto tiembla y con factor bajo va
+   con retraso, y el valor bueno depende de si la mano está quieta o moviéndose,
+   así que no existe un número correcto. El One Euro adapta el corte a la
+   velocidad — quieta suaviza mucho y mata el temblor; rápida suaviza poco y
+   mata el retraso.
+     OE_MINCUTOFF  corte (Hz) con la mano quieta. Bajarlo = más estable pero
+                   más perezoso. Subirlo = más nervioso.
+     OE_BETA       cuánto se abre el filtro con la velocidad. Subirlo = menos
+                   retraso al mover rápido, a cambio de más temblor.
+     OE_DCUTOFF    corte del estimador de velocidad. Casi nunca hay que tocarlo.
+   Referencia: Casiez, Roussel y Vogel, "1€ Filter", CHI 2012.            */
+const OE_MINCUTOFF = 1.1, OE_BETA = 0.025, OE_DCUTOFF = 1.0;
+const alfaOE = (corte, dt) => 1 / (1 + (1/(2*Math.PI*corte))/dt);
+function nuevoOneEuro(){ return { x:0, dx:0, listo:false }; }
+function oneEuro(f, x, dt){
+  if (!f.listo || dt <= 0){ f.x = x; f.dx = 0; f.listo = true; return x; }
+  const vel  = (x - f.x)/dt;
+  const velS = f.dx + alfaOE(OE_DCUTOFF, dt)*(vel - f.dx);
+  const corte = OE_MINCUTOFF + OE_BETA*Math.abs(velS);
+  const xS = f.x + alfaOE(corte, dt)*(x - f.x);
+  f.x = xS; f.dx = velS;
+  return xS;
+}
+const oeX = nuevoOneEuro(), oeY = nuevoOneEuro();
+
+/* Pellizco normalizado por tamaño de mano: igual de cerca que de lejos */
+const pinza = { cerrada:false, sx:0, sy:0, dx:0, dy:0, perdidos:99, recuperando:false, saltar:true, tPrev:0 };
+/* Gesto de agarre: mano abierta = solo mueve el cursor; índice levantado
+   (y los otros tres doblados) = toma el elemento. Un dedo se considera
+   extendido si su punta está más lejos de la muñeca que su nudillo medio;
+   así el gesto funciona con la mano en cualquier ángulo. */
+const EXT_SI = 1.15, EXT_NO = 1.02;      // histéresis, para que no parpadee
+function dedoExtendido(M, punta, nudillo, yaExtendido){
+  const dPunta   = Math.hypot(M.lx[punta]-M.lx[0],   M.ly[punta]-M.ly[0]);
+  const dNudillo = Math.hypot(M.lx[nudillo]-M.lx[0], M.ly[nudillo]-M.ly[0]) || 1e-6;
+  const r = dPunta/dNudillo;
+  return yaExtendido ? r > EXT_NO : r > EXT_SI;
+}
+
+const MS_DETECCION = 31;         // ~30 Hz, que es a lo que va realmente el vídeo
+let ultimaDeteccion = -1e9, avisadoFallo = false, manoMando = -1;
+
+function leerMano(t){
+  if (!camActiva || !detector) return;
+  const v = $('video');
+  if (v.readyState < 2) return;
+  /* Dos guardas. La del reloj del vídeo ya estaba y hace su trabajo, pero
+     depende de que el navegador no adelante currentTime entre frames; el
+     techo de 30 Hz garantiza que no se infiere dos veces el mismo frame
+     pase lo que pase. Cuánto se está ahorrando de verdad se ve con
+     perfLab(true): imprime el tiempo medio de leerMano por frame.      */
+  if (t - ultimaDeteccion < MS_DETECCION) return;
+  if (v.currentTime === ultimoT) return;
+  ultimoT = v.currentTime; ultimaDeteccion = t;
+  let res;
+  try{
+    res = modoDetector==='gestos' ? detector.recognizeForVideo(v, performance.now())
+                                  : detector.detectForVideo(v, performance.now());
+  }
+  catch(e){
+    console.error('[lab] detección:', e);
+    // a pantalla una sola vez: si fallara en cada frame la barra de estado
+    // quedaría inservible, pero en silencio no puede quedarse
+    if (!avisadoFallo){
+      avisar('Falló la detección de manos: '+(e.message||e)+' (ver consola)','err');
+      avisadoFallo = true;
+    }
+    return;
+  }
+  emparejarManos(res);
+  elegirMando(t);
+}
+
+function emparejarManos(res){
+  const L = res.landmarks;
+  const n = L ? L.length : 0;
+  for (let i=0;i<2;i++) manos[i].detectada = false;
+  const tomada = [false,false];
+  for (let k=0;k<n && k<2;k++){
+    const lm = L[k];
+    let mejor = -1, dmin = 0.22;        // más lejos que esto ya es otra mano
+    for (let i=0;i<2;i++){
+      const M = manos[i];
+      if (tomada[i] || M.perdidos > 12) continue;   // ranura caducada: da igual quién la tuvo
+      const d = Math.hypot(M.lx[0]-lm[0].x, M.ly[0]-lm[0].y);
+      if (d < dmin){ dmin = d; mejor = i; }
+    }
+    if (mejor < 0){                     // mano nueva: se le da la ranura más rancia
+      let rancia = -1;
+      for (let i=0;i<2;i++) if (!tomada[i] && manos[i].perdidos > rancia){ rancia = manos[i].perdidos; mejor = i; }
+    }
+    if (mejor < 0) continue;
+    tomada[mejor] = true;
+    volcarMano(manos[mejor], lm, res.handedness && res.handedness[k],
+               res.gestures && res.gestures[k],
+               res.worldLandmarks && res.worldLandmarks[k]);
+  }
+  for (let i=0;i<2;i++){
+    const M = manos[i];
+    if (M.detectada) M.perdidos = 0;
+    else if (++M.perdidos > 3){ M.llenas = 0; M.senalando = false; M.brillo = 0; }
+    M.viva = M.perdidos <= 3;   // 3 frames de gracia: sin esto el esqueleto parpadea
+  }
+}
+
+/* Cada cuánto se cuenta en consola quién está decidiendo el gesto. Sin este
+   freno, una mano en ángulo raro alterna clasificador/geometría varias veces
+   por segundo y llena la consola. */
+let ultimoAvisoFuente = 0;
+function volcarMano(M, lm, lado, gesto, mundo){
+  const reaparece = M.perdidos > 3;    // estuvo fuera del cuadro
+  M.detectada = true;
+  for (let i=0;i<N_PUNTOS;i++){
+    const p = lm[i];
+    M.lx[i] = p.x; M.ly[i] = p.y;
+    M.tx[i] = aPantallaX(p.x); M.ty[i] = aPantallaY(p.y);
+    // al reaparecer, el esqueleto se coloca de golpe: interpolar desde donde
+    // estaba hace medio segundo dibujaría un latigazo por media pantalla
+    if (reaparece){ M.px[i] = M.tx[i]; M.py[i] = M.ty[i]; }
+  }
+  M.lado = (lado && lado.length) ? lado[0].categoryName : '';
+  const tam = Math.hypot(M.lx[0]-M.lx[9], M.ly[0]-M.ly[9]) || 0.1;
+  // ── SEÑALAR: índice estirado y los otros tres recogidos
+  M.ext[0] = dedoExtendido(M, 8,  6,  M.ext[0]);   // índice
+  M.ext[1] = dedoExtendido(M, 12, 10, M.ext[1]);   // medio
+  M.ext[2] = dedoExtendido(M, 16, 14, M.ext[2]);   // anular
+  M.ext[3] = dedoExtendido(M, 20, 18, M.ext[3]);   // meñique
+  /* Quién decide si está señalando. Primero el clasificador entrenado, que
+     acierta más; pero devuelve 'None' bastante seguido (mano de canto, dedos
+     hacia la cámara), y ahí manda la geometría, que nunca se calla. Se
+     conservan las dos: el clasificador solo por sí mismo dejaría el control
+     muerto justo en las poses difíciles. */
+  const geo = M.ext[0] && !M.ext[1] && !M.ext[2] && !M.ext[3];
+  const cat = (gesto && gesto.length) ? gesto[0].categoryName : '';
+  let señalaAhora = geo, fuente = 'geometría';
+  if (cat === 'Pointing_Up'){ señalaAhora = true;  fuente = 'clasificador'; }
+  else if (cat === 'Open_Palm'){ señalaAhora = false; fuente = 'clasificador'; }
+  M.gesto = cat; M.fuente = fuente;
+  if (fuente !== M.fuentePrev){
+    M.fuentePrev = fuente;
+    const ahora = performance.now();
+    if (ahora - ultimoAvisoFuente > 1500){
+      ultimoAvisoFuente = ahora;
+      console.log('[lab] el gesto lo decide ahora: '+fuente+
+                  (cat ? ' (categoría: '+cat+')' : ' (el clasificador devolvió None)'));
+    }
+  }
+  /* worldLandmarks: coordenadas en METROS. El tamaño real de una mano apenas
+     cambia de una persona a otra, así que comparándolo con lo que ocupa en el
+     encuadre sale una estimación de a qué distancia está de la cámara. Se
+     deja medido y a la vista en el informe de rendimiento, pero NO se usa
+     para nada del juego: el grosor del esqueleto ya escala con el tamaño
+     aparente, que da el mismo resultado sin este segundo camino de datos. */
+  if (mundo && mundo.length > 9){
+    const mx = mundo[0].x-mundo[9].x, my = mundo[0].y-mundo[9].y, mz = mundo[0].z-mundo[9].z;
+    M.metros = Math.hypot(mx, my, mz);
+  }
+  // 2 frames de confirmación: a 30 Hz son 66 ms, imperceptible, pero evita
+  // que un fallo suelto del detector suelte la ficha a media acción
+  if (señalaAhora === M.senalando) M.confirma = 0;
+  else if (++M.confirma >= 2){ M.senalando = señalaAhora; M.confirma = 0; }
+  M.tam = tam;
+  if (reaparece) M.llenas = 0;
+  // estela: buffer circular de tamaño fijo, nunca crece
+  for (let j=0;j<5;j++){
+    const y = YEMAS[j], q = j*N_ESTELA + M.cursor;
+    M.ex[q] = M.tx[y]; M.ey[q] = M.ty[y];
+  }
+  M.cursor = (M.cursor+1) % N_ESTELA;
+  if (M.llenas < N_ESTELA) M.llenas++;
+}
+
+/* Solo UNA mano manda sobre el puntero: la que pellizca y, si ninguna lo
+   hace, la de mayor tamaño aparente (la más cercana a la cámara). Mientras
+   siga pellizcando NO se le quita el mando aunque la otra parezca mejor
+   candidata: cambiar de mano a media acción tira la ficha al otro lado.  */
+function elegirMando(t){
+  if (manoMando >= 0){
+    const D = manos[manoMando];
+    if (D.viva && D.senalando){ volcarPuntero(D, t); return; }
+  }
+  let mejor = -1, punt = -1;
+  for (let i=0;i<2;i++){
+    const M = manos[i]; if (!M.viva) continue;
+    const p = (M.senalando ? 10 : 0) + M.tam;
+    if (p > punt){ punt = p; mejor = i; }
+  }
+  manoMando = mejor;
+  if (mejor < 0){
+    if (++pinza.perdidos > 4){ pinza.cerrada = false; pinza.recuperando = true; }
+    return;
+  }
+  volcarPuntero(manos[mejor], t);
+}
+/* El One Euro trabaja al ritmo del detector (~30 Hz), que es donde llega
+   información nueva. Filtrarlo también en los frames intermedios, donde el
+   objetivo no ha cambiado, le metería velocidades cero falsas y acabaría
+   suavizando de más justo cuando la mano va rápida. */
+function volcarPuntero(M, t){
+  pinza.perdidos = 0;
+  const reinicia = pinza.saltar || !puntero.visto;
+  if (reinicia){ oeX.listo = false; oeY.listo = false; pinza.tPrev = 0; }
+  const dt = pinza.tPrev > 0 ? (t - pinza.tPrev)/1000 : 0;
+  pinza.tPrev = t;
+  pinza.dx = oneEuro(oeX, M.tx[8], dt);   // la punta del índice ES el cursor
+  pinza.dy = oneEuro(oeY, M.ty[8], dt);
+  pinza.cerrada = M.senalando;
+  if (reinicia){
+    pinza.sx = pinza.dx; pinza.sy = pinza.dy; pinza.saltar = false; puntero.visto = true;
+  }
+  S.ultimoMov = Date.now();
+}
+
+/* El detector va a ~30 Hz y el render a 60. El suavizado corre en TODOS los
+   frames hacia el último objetivo: así el puntero se siente continuo sin
+   cachear landmarks viejos (cachearlos se notaría como retraso al agarrar). */
+function suavizarPuntero(){
+  if (puntero.fuente !== 'mano' || !puntero.visto) return;
+  /* Esto ya NO es el suavizado: de eso se encarga el One Euro al llegar cada
+     detección. Aquí solo se rellenan los frames intermedios para que el
+     puntero no vaya a 30 Hz a ojos vistas. Por eso el factor es alto: cuanto
+     antes alcance el objetivo ya filtrado, menos retraso se añade. */
+  pinza.sx += (pinza.dx - pinza.sx) * 0.5;
+  pinza.sy += (pinza.dy - pinza.sy) * 0.5;
+  puntero.x = pinza.sx; puntero.y = pinza.sy;
+  if (pinza.recuperando){
+    /* Al volver la mano al encuadre el puntero llega deslizándose (no salta:
+       eso se ve fatal). Pero si aceptáramos el gesto durante el viaje,
+       agarraría cualquier ficha que pillara de paso. Se espera a que llegue. */
+    if (pinza.perdidos === 0 && Math.hypot(pinza.dx-pinza.sx, pinza.dy-pinza.sy) < 22) pinza.recuperando = false;
+    puntero.activo = false;
+    return;
+  }
+  puntero.activo = pinza.cerrada && pinza.perdidos <= 4;
+}
+
+/* ── 10.c DIBUJO RGB ────────────────────────────────────────────
+   Un tono por dedo. El glow se hace con dos pasadas (una gruesa y
+   translúcida debajo, otra fina y brillante encima) y composición
+   'lighter', NO con shadowBlur. Medido sobre los 21 huesos de UNA mano:
+   dos pasadas 0.016 ms, shadowBlur 0.099 ms. Seis veces más caro, y con
+   dos manos en cuadro y los halos encima la diferencia se multiplica.  */
+/* Perilla única del brillo. 1 = como estaba (demasiado). Bajarlo apaga el
+   efecto y además ahorra relleno de píxeles, que es lo que costaba fps. */
+const BRILLO_RGB = 0.5;
+const TONOS = [0, 60, 140, 210, 285, 190];   // pulgar, índice, medio, anular, meñique, palma
+const colGrueso = [], colFino = [], colPunto = [], halos = [];
+for (let d=0; d<6; d++){
+  const c = document.createElement('canvas'); c.width = c.height = 64; halos.push(c);
+}
+let tonoPintado = -999;
+
+function refrescarPaleta(deriva){
+  /* Rehacer las cadenas 'hsl(...)' y los halos en cada frame sería basura
+     constante para el GC. Solo se rehacen cuando la deriva se movió lo
+     bastante para que el ojo lo note (3°), o sea ~4 veces por segundo.   */
+  if (Math.abs(deriva - tonoPintado) < 3) return;
+  tonoPintado = deriva;
+  for (let d=0; d<6; d++){
+    const h   = Math.round((TONOS[d] + deriva) % 360);
+    const sat = d===5 ? 55 : 100;        // la palma va en blanco-cian tenue
+    const luz = d===5 ? 82 : 68;
+    colGrueso[d] = 'hsla('+h+','+sat+'%,50%,'+(0.16*BRILLO_RGB).toFixed(3)+')';
+    colFino[d]   = 'hsl('+h+','+sat+'%,'+Math.round(luz*(0.55+0.45*BRILLO_RGB))+'%)';
+    colPunto[d]  = 'hsl('+h+','+(sat-30)+'%,'+Math.round(90*(0.62+0.38*BRILLO_RGB))+'%)';
+    pintarHalo(halos[d], h, sat);
+  }
+}
+/* Halo radial cacheado: los mismos 6 canvas se repintan, no se crean nuevos. */
+function pintarHalo(c, h, sat){
+  const g = c.getContext('2d');
+  g.clearRect(0,0,64,64);
+  const rg = g.createRadialGradient(32,32,0,32,32,32);
+  rg.addColorStop(0,    'hsla('+h+','+sat+'%,96%,'+(0.95*BRILLO_RGB).toFixed(2)+')');
+  rg.addColorStop(0.22, 'hsla('+h+','+sat+'%,62%,'+(0.55*BRILLO_RGB).toFixed(2)+')');
+  rg.addColorStop(1,    'hsla('+h+','+sat+'%,50%,0)');
+  g.fillStyle = rg; g.fillRect(0,0,64,64);
+}
+
+let manosPintadas = false;
+function dibujarManos(t){
+  const hay = manos[0].viva || manos[1].viva;
+  if (!hay){
+    // un clearRect a pantalla completa no es gratis: no se limpia lo ya limpio
+    if (manosPintadas){ cxM.clearRect(0,0,S.W,S.H); manosPintadas = false; }
+    return;
+  }
+  cxM.clearRect(0,0,S.W,S.H);
+  manosPintadas = true;
+  refrescarPaleta((t*0.012) % 360);      // 12°/s: respira sin marear (techo: 20°/s)
+  cxM.globalCompositeOperation = 'lighter';   // los cruces suman luz
+  cxM.lineCap = 'round'; cxM.lineJoin = 'round';
+  if (manos[0].viva) pintarMano(manos[0], t);
+  if (manos[1].viva) pintarMano(manos[1], t);
+  cxM.globalCompositeOperation = 'source-over';
+  cxM.globalAlpha = 1;
+}
+
+function pintarMano(M, t){
+  const px = M.px, py = M.py;
+  // el detector va a 30 Hz sobre un vídeo que sí se ve fluido: se interpola
+  // en cada frame para que el esqueleto no vaya a saltos respecto a la imagen
+  for (let i=0;i<N_PUNTOS;i++){
+    px[i] += (M.tx[i]-px[i])*0.45;
+    py[i] += (M.ty[i]-py[i])*0.45;
+  }
+  // todo el grosor sale del tamaño aparente: de lejos la mano se dibuja fina
+  const k = Math.max(0.5, Math.min(2.2, Math.hypot(px[0]-px[9], py[0]-py[9])/95));
+  M.brillo += ((M.senalando?1:0) - M.brillo) * 0.25;  // el encendido entra con rampa
+  const B = M.brillo;
+
+  // ── estelas de las yemas, al fondo
+  for (let j=0;j<5;j++){
+    cxM.fillStyle = colFino[DEDO_DE[YEMAS[j]]];
+    for (let e=0;e<M.llenas;e++){
+      const q = j*N_ESTELA + ((M.cursor-1-e+N_ESTELA*2) % N_ESTELA);
+      const f = 1 - e/N_ESTELA;
+      cxM.globalAlpha = f*f*0.45*BRILLO_RGB;
+      cxM.beginPath(); cxM.arc(M.ex[q], M.ey[q], (1.2+3*f)*k, 0, 7); cxM.fill();
+    }
+  }
+  // ── huesos, pasada 1: gruesa y translúcida (el resplandor)
+  for (let c=0;c<HUESOS.length;c+=3){
+    const a=HUESOS[c], b=HUESOS[c+1], d=HUESOS[c+2];
+    const arde = (d===1) ? B : 0;              // solo el índice se enciende al señalar
+    cxM.globalAlpha = (0.85 + arde*0.15)*BRILLO_RGB;
+    cxM.strokeStyle = colGrueso[d];
+    cxM.lineWidth = (10 + arde*11)*k;
+    cxM.beginPath(); cxM.moveTo(px[a],py[a]); cxM.lineTo(px[b],py[b]); cxM.stroke();
+  }
+  // ── huesos, pasada 2: fina y brillante (el filamento)
+  for (let c=0;c<HUESOS.length;c+=3){
+    const a=HUESOS[c], b=HUESOS[c+1], d=HUESOS[c+2];
+    const arde = (d===1) ? B : 0;
+    cxM.globalAlpha = ((d===5 ? 0.45 : 0.9) + arde*0.1)*BRILLO_RGB;
+    cxM.strokeStyle = colFino[d];
+    cxM.lineWidth = (2 + arde*2.8)*k;
+    cxM.beginPath(); cxM.moveTo(px[a],py[a]); cxM.lineTo(px[b],py[b]); cxM.stroke();
+  }
+  // ── articulaciones: halo radial + núcleo; las yemas más grandes
+  for (let i=0;i<N_PUNTOS;i++){
+    const d = DEDO_DE[i];
+    const yema = (i===4||i===8||i===12||i===16||i===20);
+    const arde = (d===1) ? B : 0;
+    const r = (yema ? 4.3 : 2.6) * k * (1 + arde*0.55);
+    const R = r * (yema ? 3.6 : 2.6);
+    if (yema || i===0){         // halo solo donde se nota; 21 por mano era el coste real
+      cxM.globalAlpha = ((yema ? 0.9 : 0.55) + arde*0.1)*BRILLO_RGB;
+      cxM.drawImage(halos[d], px[i]-R, py[i]-R, R*2, R*2);
+    }
+    cxM.globalAlpha = 1;
+    cxM.fillStyle = colPunto[d];
+    cxM.beginPath(); cxM.arc(px[i], py[i], r, 0, 7); cxM.fill();
+  }
+  // ── el agarre tiene que cantar de un vistazo: destello entre las dos yemas
+  if (B > 0.02){
+    const mx = (px[4]+px[8])/2, my = (py[4]+py[8])/2;
+    const R = 30*k*B*(1 + Math.sin(t*0.018)*0.12);
+    cxM.globalAlpha = B*0.9;
+    cxM.drawImage(halos[1], mx-R, my-R, R*2, R*2);
+    cxM.drawImage(halos[0], mx-R*0.55, my-R*0.55, R*1.1, R*1.1);
+    cxM.globalAlpha = B;
+    cxM.strokeStyle = colPunto[1]; cxM.lineWidth = 2.2*k;
+    cxM.beginPath(); cxM.moveTo(px[4],py[4]); cxM.lineTo(px[8],py[8]); cxM.stroke();
+    cxM.globalAlpha = 1;
+  }
+}
+
+/* ── 11. BUCLE ÚNICO ───────────────────────────────────────────── */
+function bucle(t){
+  requestAnimationFrame(bucle);
+  let m = 0;
+  if (DEBUG_PERF) m = performance.now();
+  leerMano(t);
+  if (DEBUG_PERF){ perf.mano += performance.now()-m; m = performance.now(); }
+  suavizarPuntero(); actualizarAgarre(); fisica(); dibujar();
+  if (DEBUG_PERF){ perf.dibujo += performance.now()-m; m = performance.now(); }
+  dibujarManos(t);
+  if (DEBUG_PERF){ perf.manos += performance.now()-m; m = performance.now(); }
+  animarCarbonito(t);
+  pintarMundo(t);
+  if (DEBUG_PERF){ perf.carbo += performance.now()-m; perf.n++; }
+  medirFrame(t);
+}
+
+/* ── 12. ARRANQUE ──────────────────────────────────────────────── */
+/* ── 13. SONIDO ─────────────────────────────────────────────────
+   Sintetizado con Web Audio, sin un solo archivo: el prototipo tiene que
+   seguir siendo una carpeta que se abre con `npx serve`. Arranca en silencio
+   porque las políticas de autoplay no dejan sonar nada hasta que el usuario
+   toque algo, y porque en un aula el sonido lo enciende el profesor.       */
+const audio = { ctx:null, on:false };
+
+function encenderAudio(){
+  // el AudioContext se crea DENTRO del clic: creado antes nace suspendido
+  if (!audio.ctx){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC){ avisar('Este navegador no trae Web Audio; el juego funciona igual.','err'); return false; }
+    try{ audio.ctx = new AC(); }
+    catch(e){ console.error('[lab] audio:', e); avisar('No se pudo abrir el audio: '+(e.message||e),'err'); return false; }
+  }
+  if (audio.ctx.state === 'suspended') audio.ctx.resume();
+  return true;
+}
+
+/* Ruido blanco reutilizable: generar el buffer en cada golpe sería tirar
+   memoria en el momento justo en que hay 200 partículas en pantalla. */
+let bufRuido = null;
+function ruido(){
+  if (bufRuido) return bufRuido;
+  const n = audio.ctx.sampleRate * 0.7;
+  bufRuido = audio.ctx.createBuffer(1, n, audio.ctx.sampleRate);
+  const d = bufRuido.getChannelData(0);
+  for (let i=0;i<n;i++) d[i] = Math.random()*2-1;
+  return bufRuido;
+}
+
+/* Un sonido por intensidad de reacción (1 a 5):
+     1-2  burbujeo: ruido por un pasabanda estrecho y grave, entrada suave
+     3    mezcla de los dos
+     4-5  golpe: ruido de banda ancha con envolvente rapidísima y un tumbo
+          grave debajo, que es lo que da la sensación de explosión         */
+function sonarReaccion(nivel){
+  if (!audio.on || !audio.ctx) return;
+  const c = audio.ctx, t0 = c.currentTime;
+  const fuerte = nivel >= 4;
+  const dur = fuerte ? 0.9 : 1.4;
+
+  const src = c.createBufferSource(); src.buffer = ruido(); src.loop = true;
+  const filtro = c.createBiquadFilter();
+  filtro.type = fuerte ? 'lowpass' : 'bandpass';
+  filtro.frequency.value = fuerte ? 1800 : 420 + nivel*140;
+  filtro.Q.value = fuerte ? 0.7 : 6;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  if (fuerte){
+    g.gain.exponentialRampToValueAtTime(0.55, t0+0.012);   // golpe seco
+    g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+    const tumbo = c.createOscillator(), gt = c.createGain();
+    tumbo.type='sine'; tumbo.frequency.setValueAtTime(120, t0);
+    tumbo.frequency.exponentialRampToValueAtTime(38, t0+0.45);
+    gt.gain.setValueAtTime(0.0001, t0);
+    gt.gain.exponentialRampToValueAtTime(0.5, t0+0.02);
+    gt.gain.exponentialRampToValueAtTime(0.0001, t0+0.6);
+    tumbo.connect(gt).connect(c.destination); tumbo.start(t0); tumbo.stop(t0+0.65);
+  } else {
+    g.gain.exponentialRampToValueAtTime(0.02+nivel*0.045, t0+0.10);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+    // el burbujeo sube de tono al ir soltando gas
+    filtro.frequency.linearRampToValueAtTime(filtro.frequency.value*1.7, t0+dur);
+  }
+  src.connect(filtro).connect(g).connect(c.destination);
+  src.start(t0); src.stop(t0+dur+0.05);
+}
+
+/* Compuesto formado: dos notas limpias hacia arriba, que suene a acierto y no
+   a explosión. */
+function sonarEnlace(){
+  if (!audio.on || !audio.ctx) return;
+  const c = audio.ctx, t0 = c.currentTime;
+  [660, 990].forEach((hz, i)=>{
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'triangle'; o.frequency.value = hz;
+    const t = t0 + i*0.11;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22, t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+0.42);
+    o.connect(g).connect(c.destination); o.start(t); o.stop(t+0.45);
+  });
+}
+
+$('btnSonido').addEventListener('click', ()=>{
+  if (!audio.on){
+    if (!encenderAudio()) return;
+    audio.on = true; $('btnSonido').textContent = '🔊 Sonido';
+    sonarEnlace();                       // que se oiga que quedó encendido
+  } else {
+    audio.on = false; $('btnSonido').textContent = '🔇 Sonido';
+  }
+});
+
+/* ── 14. PROGRESO GUARDADO ──────────────────────────────────────
+   Un F5 en plena feria no puede borrar lo que la clase lleva descubierto.
+   Todo va envuelto: en modo incógnito o con las cookies bloqueadas,
+   localStorage lanza excepción con solo tocarlo.                          */
+const CLAVE_GUARDADO = 'laboratorio-peligroso-v1';
+function guardarProgreso(){
+  try{
+    localStorage.setItem(CLAVE_GUARDADO, JSON.stringify({
+      elementos:[...S.descubiertos], compuestos:[...S.compuestos]
+    }));
+  }catch(e){ console.warn('[lab] no se pudo guardar el progreso:', e.message||e); }
+}
+function cargarProgreso(){
+  try{
+    const crudo = localStorage.getItem(CLAVE_GUARDADO);
+    if (!crudo) return;
+    const d = JSON.parse(crudo);
+    (d.elementos||[]).forEach(x=>S.descubiertos.add(x));
+    (d.compuestos||[]).forEach(x=>S.compuestos.add(x));
+    $('cuenta').textContent  = S.descubiertos.size;
+    $('cuentaC').textContent = S.compuestos.size;
+    if (S.descubiertos.size || S.compuestos.size)
+      console.log('[lab] progreso recuperado:', S.descubiertos.size, 'elementos y',
+                  S.compuestos.size, 'compuestos');
+  }catch(e){ console.warn('[lab] no se pudo leer el progreso:', e.message||e); }
+}
+
+/* ── 15. CAPTURA ────────────────────────────────────────────────
+   Las cuatro capas están en canvas distintos, así que hay que componerlas.
+   El canvas WebGL se vuelve a pintar justo antes: sin preserveDrawingBuffer
+   su contenido ya no está disponible una vez compuesto el frame, y saldría
+   Carbonito en negro.                                                      */
+$('btnFoto').addEventListener('click', ()=>{
+  try{
+    const o = document.createElement('canvas');
+    o.width = cv.width; o.height = cv.height;
+    const g = o.getContext('2d');
+    g.fillStyle = '#0b1020'; g.fillRect(0,0,o.width,o.height);
+    const v = $('video');
+    if (camActiva && v.videoWidth){
+      g.save(); g.globalAlpha = 0.32;
+      g.translate(o.width, 0); g.scale(-1, 1);       // el vídeo va espejado
+      const k = Math.max(o.width/v.videoWidth, o.height/v.videoHeight);
+      const aw = v.videoWidth*k, ah = v.videoHeight*k;
+      g.drawImage(v, (o.width-aw)/2, (o.height-ah)/2, aw, ah);
+      g.restore();
+    }
+    if (mundoRender){ mundoRender.render(mundoEscena, mundoCam); g.drawImage($('mundo3d'),0,0,o.width,o.height); }
+    g.drawImage(cvM, 0, 0); g.drawImage(cv, 0, 0);
+    const a = document.createElement('a');
+    a.download = 'laboratorio-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.png';
+    a.href = o.toDataURL('image/png');
+    a.click();
+    avisar('Captura guardada en tus descargas.','ok');
+  }catch(e){
+    console.error('[lab] captura:', e);
+    avisar('No se pudo guardar la captura: '+(e.message||e),'err');
+  }
+});
+
+/* ── 16. MODO FERIA (?feria=1) ──────────────────────────────────
+   Para ferias y colegios, donde nadie va a estar mirando el navegador.
+   La bandera FERIA se declara arriba del archivo, junto a DEBUG_PERF.     */
+const FERIA_INACTIVIDAD = 90000;      // 90 s sin tocar nada y vuelve a empezar
+const FERIA_REINTENTOS  = 6;          // intentos de recuperar la cámara perdida
+let feriaReintentos = 0, feriaTimer = null;
+
+function vigilarFeria(){
+  if (!FERIA) return;
+  if (Date.now() - S.ultimaAccion > FERIA_INACTIVIDAD &&
+      (S.descubiertos.size || S.compuestos.size)){
+    S.ultimaAccion = Date.now();
+    reiniciarTodo(true);
+    hablar('Empezamos otra vez. ¡Acércate y prueba!', 6000);
+    console.log('[lab] feria: reinicio por inactividad');
+  }
+}
+
+/* La cámara se cae sola en las ferias: un cable que alguien roza, un hub USB
+   que se satura. Se reintenta sin molestar; si no vuelve, se sigue con ratón,
+   que es la razón de que el juego nunca dependa de la cámara. */
+function vigilarCamara(){
+  if (!camActiva) return;
+  const v = $('video');
+  const pista = v.srcObject && v.srcObject.getVideoTracks()[0];
+  const perdida = !pista || pista.readyState === 'ended' || !pista.enabled;
+  if (!perdida){ feriaReintentos = 0; return; }
+  apagarCamara();
+  if (feriaReintentos >= FERIA_REINTENTOS){
+    avisar('Se perdió la cámara y no vuelve. Sigue jugando con el ratón.','err');
+    return;
+  }
+  feriaReintentos++;
+  avisar('Se perdió la cámara. Reintentando ('+feriaReintentos+'/'+FERIA_REINTENTOS+')…','err');
+  clearTimeout(feriaTimer);
+  feriaTimer = setTimeout(()=>{ encenderCamara().catch(e=>console.error('[lab] reintento:', e)); }, 3000);
+}
+setInterval(()=>{ vigilarFeria(); if (FERIA) vigilarCamara(); }, 2000);
+
+if (FERIA){
+  document.body.classList.add('feria');
+  // Hasta donde el navegador permite: F11 y los atajos de cierre se comen
+  // aquí; salir del pantalla completa de verdad solo lo decide el navegador.
+  window.addEventListener('keydown', ev=>{
+    if (ev.key==='F11' || ((ev.ctrlKey||ev.metaKey) && ['w','r','n','t'].indexOf(ev.key.toLowerCase())>=0)){
+      ev.preventDefault(); ev.stopPropagation();
+    }
+  }, true);
+  window.addEventListener('beforeunload', ev=>{ ev.preventDefault(); ev.returnValue = ''; });
+  console.log('[lab] MODO FERIA activo: reinicio a los '+(FERIA_INACTIVIDAD/1000)+
+              ' s sin actividad, cámara con reintento, depuración apagada.');
+}
+
+$('btnVaciar').addEventListener('click', ()=>{ vaciarMesa(); panelPintado=''; });
+function reiniciarTodo(silencioso){
+  S.descubiertos.clear(); S.compuestos.clear();
+  $('cuenta').textContent='0'; $('cuentaC').textContent='0';
+  vaciarMesa();
+  nPart=0; nDest=0; panelPintado='';
+  S.fichas.forEach(f=>{ f.x=f.casaX; f.y=f.casaY; });
+  $('infoCuerpo').className='vacio';
+  $('infoCuerpo').innerHTML='Arrastra un elemento hasta el vaso de agua, o junta dos en la zona de enlace.';
+  guardarProgreso();
+  if (!silencioso) hablar('Empezamos de nuevo. Prueba en orden: Litio, Sodio, Potasio, Cesio.',6000);
+}
+$('btnReset').addEventListener('click', ()=>reiniciarTodo(false));
+$('total').textContent  = ELEMENTOS.length;
+$('totalC').textContent = ENLACES.length;
+cargarProgreso();
+disponer();
+cargarCarbonito();
+requestAnimationFrame(bucle);
+setTimeout(()=>hablar(PISTAS[0],7000), 1200);
+console.log('[lab] Listo. Elementos:', ELEMENTOS.length, '| Principio:', PRINCIPIO.nombre);
+</script>
+</body>
+</html>
