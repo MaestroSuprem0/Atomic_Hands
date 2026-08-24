@@ -90,7 +90,25 @@
   #estado{font-size:11.5px;color:var(--tenue);width:100%;line-height:1.45}
   #estado.err{color:#ff8f8f}
   #estado.ok{color:var(--ok)}
-  #modo{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;
+  #reto{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:5;
+        width:min(460px,52vw);background:rgba(8,13,28,.93);border:1px solid var(--borde);
+        border-left:3px solid var(--acento);border-radius:11px;padding:9px 13px;
+        transition:border-color .3s,box-shadow .3s}
+  #reto.oculto{display:none}
+  #reto.logrado{border-left-color:var(--ok);box-shadow:0 0 22px rgba(55,214,122,.28)}
+  #retoCab{display:flex;justify-content:space-between;align-items:center;gap:8px;
+           font-size:10.5px;color:var(--tenue);text-transform:uppercase;letter-spacing:.7px}
+  #retoCab button{background:none;border:1px solid var(--borde);color:var(--tenue);
+                  border-radius:6px;padding:2px 8px;font-size:10px;font-weight:500;
+                  text-transform:none;letter-spacing:0}
+  #retoCab button:hover{color:var(--texto);border-color:var(--acento)}
+  #retoTitulo{font-size:15px;font-weight:600;margin-top:3px;line-height:1.3}
+  #retoPista{font-size:12px;color:#ffd489;margin-top:5px;line-height:1.4;display:none}
+  #retoPista.ver{display:block}
+  #retoLogro{font-size:12.5px;color:#cbd6f0;margin-top:6px;line-height:1.45;display:none}
+  #retoLogro.ver{display:block}
+  #retoLogro b{color:var(--ok)}
+  #modo{position:absolute;top:12px;left:12px;z-index:6;
         background:rgba(8,13,28,.82);border:1px solid var(--borde);border-radius:20px;
         padding:5px 13px;font-size:12px;display:flex;align-items:center;gap:7px}
   #puntoModo{width:8px;height:8px;border-radius:50%;background:var(--acento)}
@@ -109,6 +127,12 @@
     <canvas id="manos"></canvas>
     <canvas id="juego"></canvas>
     <div id="globo"></div>
+    <div id="reto">
+      <div id="retoCab"><span id="retoNum"></span><button id="btnModoLibre">Modo libre</button></div>
+      <div id="retoTitulo"></div>
+      <div id="retoPista"></div>
+      <div id="retoLogro"></div>
+    </div>
     <div id="modo"><span id="puntoModo"></span><span id="modoTxt">Modo ratón</span></div>
     <div id="marcador">
       <div>elementos <b id="cuenta">0</b>/<span id="total">19</span></div>
@@ -143,6 +167,7 @@
 </div>
 
 <script src="datos.js"></script>
+<script src="retos.js"></script>
 <script>
 "use strict";
 /* ═══════════════════════════════════════════════════════════════
@@ -180,6 +205,29 @@
       animarCarbonito()                            0.02 ms
       frame completo, peor caso                    0.35 ms
       margen hasta los 16.7 ms de un frame a 60    16.3 ms
+
+   ── TERCERA RONDA (quemador y electrólisis) ─────────────────────
+      Las dos zonas nuevas no mueven la aguja: dibujar la balanza y los
+      tubos de gas cuesta 0.06 ms, y sus actualizadores no llegan a medirse.
+
+      dibujar() con las cuatro zonas vacías        0.15 ms
+      dibujar() con balanza puesta y electrólisis
+        en marcha                                  0.21 ms
+      dibujar() además con 300 partículas          0.26 ms
+      actualizarQuemador + actualizarElectrolisis  0.00 ms
+      capa de manos, 2 manos en cuadro             0.12 ms
+      frame completo, peor caso                    0.38 ms
+      margen hasta los 16.7 ms de un frame a 60    16.3 ms
+
+   ── LA PROPORCIÓN 2:1 DE LA ELECTRÓLISIS ────────────────────────
+   Contada de verdad, no "se ve parecido". 30 s de corriente continua:
+
+      frames estables (16.7 ms)    150 H · 75 O   razón 2.0000
+      frames irregulares (8-50 ms) 150 H · 75 O   razón 2.0000
+
+   Sale exacta porque el turno rota H, H, O en vez de sortearse: con azar
+   por frame la razón sería 2:1 "más o menos", y el más o menos es justo lo
+   que no sirve cuando la gracia es que el chico las cuente.
 
    La mesa de enlaces cuesta 0.02 ms porque el texto se parte en líneas UNA
    vez, al cambiar el mensaje, y no en cada frame: medir texto es de lo más
@@ -281,10 +329,15 @@ const puntero = { x:0, y:0, activo:false, fuente:'raton', visto:false };
 const S = {
   fichas:[], vaso:null, agarrada:null,
   sacudida:0, agua:{ nivel:0, olas:0 }, descubiertos:new Set(), compuestos:new Set(),
-  mesa:null,
+  mesa:null, quemador:null, electro:null,
   ultimoMov:Date.now(), ultimaAccion:Date.now(), reaccionando:0, W:0, H:0, dpr:1, sacX:0, sacY:0
 };
 const RAND = (a,b)=>a+Math.random()*(b-a);
+
+/* Alto reservado arriba para el panel de retos, que es HTML y flota sobre el
+   canvas. Antes la mesa empezaba en y=96 y el panel se le montaba encima en
+   cuanto salía la pista. Medido con título de dos líneas y pista visible. */
+const BANDA_RETO = 122;
 
 /* -- 1.b POOL DE PARTICULAS -------------------------------------
    Antes cada reaccion hacia push de cientos de objetos y fisica() los
@@ -342,16 +395,44 @@ function disponer(){
   const vh = Math.min(230, S.H*0.30);
   S.vaso = { x: 46, y: S.H - vh - 38, w:vw, h:vh };
 
-  /* Zona de enlace: entre el vaso y el estante, arriba, para que se lea como
-     un sitio distinto del vaso. Son dos dianas grandes a propósito: con la
-     mano temblando, una ranura pequeña es imposible de acertar. */
+  /* ── LAS CUATRO ZONAS ──────────────────────────────────────────
+     Reparto pensado para que ninguna quede pequeña: con seguimiento por
+     manos, una diana chica es inservible. No hizo falta un selector de zona
+     porque en la franja libre caben las cuatro con holgura desde 1024 px.
+
+         ┌──────────┬───────────────┬──────────┐
+         │ QUEMADOR │  mesa enlaces │          │
+         │          ├───────────────┤ estante  │
+         │          │  ELECTRÓLISIS │ (fichas) │
+         ├──────────┤               │          │
+         │  vaso    │               │          │
+         └──────────┴───────────────┴──────────┘                          */
   const izq = S.vaso.x + S.vaso.w + 34, der = S.estanteIzq - 120;
   const mw = Math.max(240, Math.min(460, der - izq));
   const mesa = S.mesa || (S.mesa = { ranuras:[], enlace:null, error:'', lineas:[], destello:0, factor:1 });
   mesa.x = Math.max(izq, (izq + der)/2 - mw/2);
-  mesa.y = 96; mesa.w = mw; mesa.h = 156;
+  mesa.y = BANDA_RETO; mesa.w = mw; mesa.h = 156;
   mesa.rs = Math.max(22, Math.min(34, mw*0.075));          // radio de cada ranura
   envolverMensaje();
+
+  // Quemador: franja de la izquierda, encima del vaso. Es alto y estrecho
+  // porque el fuego sube, y porque ahí no le quita sitio a nadie.
+  const Q = S.quemador || (S.quemador = { fase:'listo', t:0, el:null, enlace:null, masas:null, color:'#ffd35e' });
+  Q.x = 30;
+  Q.w = Math.max(150, S.vaso.x + S.vaso.w - 30);
+  Q.y = BANDA_RETO;
+  Q.h = Math.max(150, S.vaso.y - BANDA_RETO - 18);
+
+  // Electrólisis: debajo de la mesa, misma anchura, para que se lean como
+  // las dos caras de lo mismo (armar agua arriba, separarla abajo).
+  const E = S.electro || (S.electro = { encendido:false, completado:false, nH:0, nO:0, acum:0, turno:0, chispa:0 });
+  E.x = mesa.x; E.w = mesa.w;
+  E.y = mesa.y + mesa.h + 18;
+  E.h = Math.min(250, Math.max(150, S.H - E.y - 22));
+  E.yAgua = E.y + 66; E.hAgua = E.h - 96;
+  E.xNeg = E.x + E.w*0.30; E.xPos = E.x + E.w*0.62;        // − a la izquierda, + a la derecha
+  E.swW = Math.min(150, E.w*0.34); E.swH = 40;
+  E.swX = E.x + E.w - E.swW - 14; E.swY = E.y + E.h - E.swH - 30;
 
   if (mundoRender){
     mundoRender.setSize(S.W, S.H, false);
@@ -402,16 +483,23 @@ function actualizarAgarre(){
     S.agarrada.y += (puntero.y - S.agarrada.y)*0.35;
   }
   if (suelta && S.agarrada){
-    const f = S.agarrada, v = S.vaso, m = S.mesa;
+    const f = S.agarrada, v = S.vaso;
+    // todas las zonas aceptan con margen: soltar justo en el borde es lo
+    // normal cuando el puntero lo lleva una mano
+    const dentro = (z, mx) => z && f.x > z.x-mx && f.x < z.x+z.w+mx &&
+                                   f.y > z.y-mx && f.y < z.y+z.h+mx;
     const enVaso = f.x > v.x-24 && f.x < v.x+v.w+24 &&
                    f.y > v.y-24 && f.y < v.y+v.h+32;
-    // la mesa acepta con margen: soltar justo en el borde es lo normal cuando
-    // el puntero lo lleva una mano
-    const enMesa = m && f.x > m.x-26 && f.x < m.x+m.w+26 &&
-                        f.y > m.y-26 && f.y < m.y+m.h+26;
-    if (enVaso)      lanzar(f);
-    else if (enMesa) ponerEnMesa(f);
-    else             volverACasa(f);
+    if (enVaso)                        lanzar(f);
+    else if (dentro(S.mesa, 26))       ponerEnMesa(f);
+    else if (dentro(S.quemador, 26))   ponerEnQuemador(f);
+    else if (dentro(S.electro, 26)){
+      // la electrólisis no come átomos: se enciende con el gesto
+      volverACasa(f);
+      hablar('Aquí no se sueltan átomos: <b>mantén el índice levantado</b> sobre '+
+             'el botón de corriente y mira qué le pasa al agua.', 6000);
+    }
+    else                               volverACasa(f);
     S.agarrada = null;
   }
 }
@@ -431,7 +519,83 @@ const COLOR_FAMILIA = {
   metal:            '#94a3b8',   // gris azulado
   metal_transicion: '#f43f5e'    // rojo
 };
-const colorDe = el => COLOR_FAMILIA[el.familia] || colorDe(el);
+/* Ojo: esto decía `|| colorDe(el)`, que se llamaba a sí misma sin fin. No
+   reventaba porque las 19 familias del estante están todas en la tabla, pero
+   el primer elemento con familia nueva colgaba la pestaña. El respaldo es el
+   color CPK que ya trae el elemento. */
+const colorDe = el => COLOR_FAMILIA[el.familia] || el.color || '#888';
+
+/* ══ MODO RETO ════════════════════════════════════════════════════
+   El juego ya sabía enseñar "qué pasa si…". Esto le añade "qué tengo que
+   lograr", que es lo que convierte una colección en una partida y lo que
+   hace que una visita de feria tenga principio y final.
+
+   La pista NO sale al instante: aparece sola a los 30 s. Si se diera antes
+   no habría nada que pensar, y si no se diera nunca el chico se atasca y
+   abandona. Y nunca dice la respuesta: empuja hacia el razonamiento
+   (quién cede, quién capta) que es lo que se quiere enseñar.            */
+const RETO = { activo:true, i:0, resuelto:false, t0:0, pista:false, tLogro:0 };
+const MS_PISTA = 30000, MS_SIGUIENTE = 6500;
+
+function retoActual(){ return RETO.activo ? RETOS[RETO.i] : null; }
+
+function pintarReto(){
+  const caja = $('reto');
+  if (!RETO.activo || RETO.i >= RETOS.length){ caja.classList.add('oculto'); return; }
+  const r = RETOS[RETO.i];
+  caja.classList.remove('oculto');
+  $('retoNum').textContent = 'Reto '+(RETO.i+1)+' de '+RETOS.length;
+  $('retoTitulo').textContent = r.titulo;
+  $('retoPista').textContent = '💡 '+r.pista;
+}
+
+function arrancarReto(i){
+  RETO.i = i; RETO.resuelto = false; RETO.pista = false; RETO.t0 = performance.now();
+  $('reto').classList.remove('logrado');
+  $('retoPista').classList.remove('ver');
+  $('retoLogro').classList.remove('ver');
+  pintarReto();
+}
+
+/* Se llama cuando se forma un compuesto o cuando algo cae al vaso. */
+function comprobarReto(tipo, clave){
+  const r = retoActual();
+  if (!r || RETO.resuelto || r.tipo !== tipo || r.meta !== clave) return;
+  RETO.resuelto = true;
+  RETO.tLogro = performance.now();
+  const viva = RETO_LOGRADO[Math.floor(Math.random()*RETO_LOGRADO.length)];
+  $('reto').classList.add('logrado');
+  $('retoPista').classList.remove('ver');
+  $('retoLogro').innerHTML = '<b>'+viva+'</b> '+r.uso;
+  $('retoLogro').classList.add('ver');
+  if (typeof sonarEnlace === 'function') { try { sonarEnlace(); } catch(e){} }
+  hablar('<b>'+viva+'</b> '+r.titulo.replace(/^Forma /,'Formaste ')+'.', 5000);
+}
+
+function actualizarReto(tms){
+  if (!RETO.activo || RETO.i >= RETOS.length) return;
+  if (RETO.resuelto){
+    if (tms - RETO.tLogro > MS_SIGUIENTE){
+      if (RETO.i + 1 < RETOS.length) arrancarReto(RETO.i + 1);
+      else {                                   // se acabaron: vuelta a empezar
+        $('retoTitulo').textContent = '¡Completaste los '+RETOS.length+' retos!';
+        $('retoNum').textContent = 'Fin';
+        RETO.tLogro = tms + 1e9;               // se queda ahí hasta reiniciar
+      }
+    }
+    return;
+  }
+  if (!RETO.pista && tms - RETO.t0 > MS_PISTA){
+    RETO.pista = true;
+    $('retoPista').classList.add('ver');
+  }
+}
+
+$('btnModoLibre').addEventListener('click', ()=>{
+  RETO.activo = !RETO.activo;
+  $('btnModoLibre').textContent = RETO.activo ? 'Modo libre' : 'Volver a retos';
+  if (RETO.activo) arrancarReto(RETO.i); else $('reto').classList.add('oculto');
+});
 
 /* ══ VISOR 3D DEL PANEL ═══════════════════════════════════════════
    Muestra el átomo (modelo de Bohr) o el compuesto formado.
@@ -777,6 +941,7 @@ function evaluarMesa(){
 function formarCompuesto(en, a, b, factor){
   const M = S.mesa;
   M.enlace = en; M.error = ''; M.destello = 1;
+  comprobarReto('enlace', en.formula);
   mostrarEnVisor('co:'+en.formula, ()=>construirCompuesto(en));
   M.factor = factor || 1;
   const nuevo = !S.compuestos.has(en.formula);
@@ -789,7 +954,10 @@ function formarCompuesto(en, a, b, factor){
     q.x = cxm+RAND(-18,18); q.y = cym+RAND(-14,14);
     q.vx = RAND(-1.6,1.6); q.vy = RAND(-2.2,-0.4);
     q.vida = 1; q.r = RAND(2,4);
-    q.color = (i%2 ? a.colorDe(el) : b.colorDe(el)); q.tipo = 'chispa';
+    // Ojo: esto decía `a.colorDe(el)`, un buscar-y-reemplazar que salió mal.
+    // Lanzaba ReferenceError al formar CUALQUIER compuesto, o sea que la
+    // mecánica principal del juego estaba rota (y desplegada en docs/).
+    q.color = (i%2 ? colorDe(a.el) : colorDe(b.el)); q.tipo = 'chispa';
   }
   for (let i=0;i<6;i++){
     const d = nuevoDestello(); if (!d) break;
@@ -862,7 +1030,10 @@ function mostrarCompuesto(en, a, b){
        '<a href="'+A.pubchem+'" target="_blank" rel="noopener">'+A.simbolo+' ↗</a> y '+
        '<a href="'+B.pubchem+'" target="_blank" rel="noopener">'+B.simbolo+' ↗</a>'+
        ' — PubChem, NCBI / National Library of Medicine</div>';
-  mostrarEnVisor('el:'+el.simbolo, ()=>construirAtomo(el));
+  /* Aquí había una línea copiada de mostrarElemento que pedía el visor de un
+     ÁTOMO usando una variable `el` que en esta función no existe: segundo
+     ReferenceError en el mismo camino. El compuesto ya lo manda al visor
+     formarCompuesto justo antes de llamar aquí, así que sobra. */
   $('infoCuerpo').innerHTML = h;
   $('infoCuerpo').className = '';
 }
@@ -952,6 +1123,440 @@ function dibujarMesa(){
   cx.textBaseline='alphabetic';
 }
 
+/* ── 4.c EL QUEMADOR: COMBUSTIÓN ────────────────────────────────
+   La tercera zona. Se arrastra un metal y se quema en oxígeno:
+
+       2 Mg + O₂ → 2 MgO
+
+   Lo que hay que enseñar aquí NO es el destello: es que el magnesio, al
+   arder, PESA MÁS que antes. Todo chico asume lo contrario, porque lo que
+   queda parece ceniza. Gana masa porque captura el oxígeno del aire, y esa
+   cuenta se puede seguir con los dedos. Por eso la tabla de masas es el
+   centro de la zona y el fuego es el adorno.
+
+   No hace falta química nueva: los óxidos ya los calculó el motor del
+   octeto y están en datos.js.                                            */
+const EL_POR_SIM = new Map();
+for (const e of ELEMENTOS) EL_POR_SIM.set(e.simbolo, e);
+
+/* Qué metales arden: los que tienen óxido entre los enlaces jugables.
+   Se deduce de los datos, no se escribe una lista a mano — así, si mañana
+   entra otro metal al estante, el quemador lo acepta solo.                */
+const OXIDO_DE = new Map();
+for (const e of ENLACES){
+  if (e.tipo !== 'ionica') continue;
+  const sims = Object.keys(e.cuantos);
+  if (sims.length !== 2 || !e.cuantos.O) continue;
+  const metal = sims.find(x => x !== 'O');
+  /* El francio se queda fuera a propósito. Tiene óxido calculado, pero
+     jamás se ha reunido un trozo visible del elemento: enseñar su llama
+     sería inventar un dato observacional que no existe. */
+  if (metal === 'Fr') continue;
+  OXIDO_DE.set(metal, e);
+}
+
+/* Masas de la combustión, SUMADAS desde datos.js (campo `masa`, validado
+   contra PubChem). No hay ni un número escrito a mano: si mañana PubChem
+   corrige una masa y se regenera datos.js, esta tabla se corrige sola.
+   Comprobado: MgO da 40.3 u y Li₂O da 30.0 u (con Li = 7.0, no 6.94).   */
+function masasDe(en){
+  const metal = Object.keys(en.cuantos).find(x => x !== 'O');
+  const nM = en.cuantos[metal], nO = en.cuantos.O;
+  const mM = EL_POR_SIM.get(metal).masa * nM;
+  const mO = EL_POR_SIM.get('O').masa   * nO;
+  return { metal, nM, nO, mM, mO, total: mM + mO,
+           gana: ((mM + mO)/mM - 1) * 100 };      // cuánto por ciento engorda
+}
+
+const QUEMA_MS = 1500;          // lo que dura la llama antes de mostrar el peso
+
+function ponerEnQuemador(f){
+  const Q = S.quemador, el = f.el;
+  S.ultimaAccion = Date.now();
+  volverACasa(f);                                  // el estante nunca se vacía
+  const en = OXIDO_DE.get(el.simbolo);
+  if (!en){
+    hablar('El <b>'+el.nombre+'</b> no arde en oxígeno. Prueba con un metal: '+
+           'los morados y los verdes del estante.', 6000);
+    return;
+  }
+  Q.el = el; Q.enlace = en; Q.masas = masasDe(en);
+  Q.fase = 'ardiendo'; Q.t = 0;
+  Q.color = (typeof LLAMAS !== 'undefined' && LLAMAS[el.simbolo]) || '#ffd35e';
+  arderQuemador();
+}
+
+/* El fuego reutiliza el pool de partículas y el sonido que ya existían: no
+   se monta un motor nuevo para esto. */
+function arderQuemador(){
+  const Q = S.quemador;
+  const ox = Q.x + Q.w/2, oy = Q.y + Q.h*0.52;
+  const blanco = Q.el.simbolo === 'Mg';            // el magnesio ciega, no colorea
+  for (let i=0;i<90;i++){
+    const q = nuevaParticula(); if (!q) break;
+    q.x = ox + RAND(-Q.w*0.16, Q.w*0.16); q.y = oy + RAND(-6, 14);
+    q.vx = RAND(-0.7, 0.7); q.vy = RAND(-3.4, -1.2);
+    q.vida = 1; q.r = RAND(2, 5);
+    q.color = blanco ? (Math.random()<0.6 ? '#ffffff' : '#dfe9ff') : Q.color;
+    q.tipo = 'chispa';
+  }
+  for (let i=0;i<10;i++){
+    const d = nuevoDestello(); if (!d) break;
+    d.x = ox + RAND(-26,26); d.y = oy - RAND(0,40);
+    d.vida = 1; d.r = RAND(18, blanco ? 62 : 40);
+    d.color = blanco ? '#ffffff' : Q.color;
+  }
+  S.sacudida = blanco ? 5 : 3;
+  carbo.susto = 0.7;
+  sonarReaccion(blanco ? 5 : 3);
+}
+
+function actualizarQuemador(dt){
+  const Q = S.quemador; if (!Q || Q.fase === 'listo') return;
+  Q.t += dt;
+  if (Q.fase === 'ardiendo'){
+    // el magnesio suelta chispas mientras arde; los alcalinos, su color
+    if (Q.t < QUEMA_MS*0.7 && Math.random() < 0.5){
+      const q = nuevaParticula();
+      if (q){
+        q.x = Q.x + Q.w/2 + RAND(-Q.w*0.14, Q.w*0.14); q.y = Q.y + Q.h*0.5;
+        q.vx = RAND(-0.5,0.5); q.vy = RAND(-2.6,-1);
+        q.vida = 1; q.r = RAND(1.5,3.5);
+        q.color = Q.el.simbolo==='Mg' ? '#ffffff' : Q.color; q.tipo = 'chispa';
+      }
+    }
+    if (Q.t >= QUEMA_MS){
+      Q.fase = 'resultado';
+      terminarCombustion();
+    }
+  }
+}
+
+function terminarCombustion(){
+  const Q = S.quemador, en = Q.enlace, m = Q.masas;
+  const nuevo = !S.compuestos.has(en.formula);
+  S.compuestos.add(en.formula);
+  $('cuentaC').textContent = S.compuestos.size;
+  guardarProgreso();
+  comprobarReto('quemar', Q.el.simbolo);
+  mostrarCombustion(en, Q.el, m);
+  hablar('El <b>'+Q.el.nombre+'</b> ardió y quedó '+conSub(en.formula)+'. '+
+         'Fíjate: pesa <b>MÁS</b> que el metal que quemaste, porque se llevó '+
+         'el oxígeno del aire.' + (nuevo ? '' : ' (Ese ya lo tenías.)'), 8000);
+}
+
+function vaciarQuemador(){
+  const Q = S.quemador; if (!Q) return;
+  Q.el = null; Q.enlace = null; Q.masas = null; Q.fase = 'listo'; Q.t = 0;
+}
+
+/* ── 4.d ELECTRÓLISIS DEL AGUA ──────────────────────────────────
+   La cuarta zona, y la única que va al revés que todo lo demás:
+
+       2 H₂O → 2 H₂ + O₂
+
+   En la mesa de enlaces se ARMA agua juntando hidrógeno y oxígeno; aquí se
+   SEPARA de vuelta. Formar agua libera energía; separarla la exige, y por
+   eso hace falta enchufarla. Ese ida y vuelta es el concepto, y la interfaz
+   lo dice con todas las letras.
+
+   El detalle que no es decoración: del electrodo negativo sale el DOBLE de
+   gas que del positivo. Esa proporción 2:1 es la demostración visual de por
+   qué la fórmula es H₂O y no HO.                                          */
+const ELEC_CAP = 60;            // burbujas de H que llenan el tubo (el de O llega a la mitad)
+const ELEC_RITMO = 0.0075;      // burbujas por milisegundo (~7.5 por segundo)
+
+/* La proporción NO se sortea. Con azar por frame, 30 segundos de burbujas
+   dan 2:1 "más o menos", y aquí el más o menos es justamente lo que no
+   sirve: el chico tiene que poder contarlas. El turno rota H, H, O — así la
+   proporción es exacta desde la primera burbuja y a cualquier velocidad. */
+function actualizarElectrolisis(dt){
+  const E = S.electro; if (!E) return;
+  E.chispa *= 0.9;
+  if (!E.encendido || E.completado) return;
+  E.acum += dt * ELEC_RITMO;
+  while (E.acum >= 1){
+    E.acum -= 1;
+    const esH = (E.turno < 2);
+    E.turno = (E.turno + 1) % 3;
+    if (esH) E.nH++; else E.nO++;
+    burbujaElectrodo(esH);
+  }
+  /* Se corta al CERRAR el ciclo H,H,O, no en cuanto el tubo se llena. Si se
+     cortara a mitad quedarían 60 y 29, y el chico leería 2.07 a 1 justo en el
+     momento en que se le está diciendo que es 2 a 1 exacto. */
+  if (E.nH >= ELEC_CAP && E.nH === E.nO*2) completarElectrolisis();
+}
+
+function burbujaElectrodo(esH){
+  const E = S.electro;
+  const q = nuevaParticula(); if (!q) return;
+  const x = esH ? E.xNeg : E.xPos;
+  q.x = x + RAND(-7,7); q.y = E.yAgua + E.hAgua*0.72;
+  q.vx = RAND(-0.14,0.14); q.vy = RAND(-1.5,-0.8);
+  q.vida = 1; q.r = RAND(1.8, 3.4);
+  q.color = esH ? '#9fd8ff' : '#ffd9a0';          // H celeste, O anaranjado
+  q.tipo = 'burbuja';
+}
+
+function completarElectrolisis(){
+  const E = S.electro;
+  E.completado = true; E.encendido = false; E.chispa = 1;
+  for (const f of ['H2','O2']){
+    if (ENLACE_POR_CLAVE.get(f==='H2' ? 'H+H' : 'O+O')) S.compuestos.add(f);
+  }
+  $('cuentaC').textContent = S.compuestos.size;
+  guardarProgreso();
+  comprobarReto('electrolisis', 'H2O');
+  sonarEnlace();
+  mostrarElectrolisis();
+  hablar('Separaste el agua: <b>'+E.nH+' de hidrógeno</b> y <b>'+E.nO+' de oxígeno</b>. '+
+         'El doble de uno que de otro… por eso la fórmula es H₂O y no HO.', 9000);
+}
+
+function vaciarElectrolisis(){
+  const E = S.electro; if (!E) return;
+  E.encendido = false; E.completado = false;
+  E.nH = 0; E.nO = 0; E.acum = 0; E.turno = 0; E.chispa = 0;
+}
+
+/* El interruptor se sostiene con el gesto, no se pulsa: mantener el índice
+   levantado sobre él es la forma más fiable de "aplicar corriente" cuando el
+   puntero lo lleva una mano temblando. Con ratón es igual: mantener pulsado. */
+function atenderElectrolisis(){
+  const E = S.electro; if (!E || E.completado){ if (E) E.encendido = false; return; }
+  const dentro = puntero.visto && puntero.activo &&
+                 puntero.x > E.swX - 18 && puntero.x < E.swX + E.swW + 18 &&
+                 puntero.y > E.swY - 18 && puntero.y < E.swY + E.swH + 18;
+  if (dentro && !E.encendido) S.ultimaAccion = Date.now();
+  E.encendido = dentro;
+}
+
+/* ── dibujo del quemador ───────────────────────────────────────── */
+function dibujarQuemador(){
+  const Q = S.quemador; if (!Q) return;
+  const ardiendo = Q.fase === 'ardiendo';
+
+  cx.fillStyle = 'rgba(10,16,36,.66)';
+  caja(Q.x, Q.y, Q.w, Q.h, 14); cx.fill();
+  cx.lineWidth = ardiendo ? 3 : 1.5;
+  cx.strokeStyle = ardiendo ? (Q.color || '#ffd35e')
+                 : Q.fase === 'resultado' ? 'rgba(255,255,255,.5)'
+                 : 'rgba(255,140,60,.45)';
+  caja(Q.x, Q.y, Q.w, Q.h, 14); cx.stroke();
+
+  cx.textAlign='left'; cx.textBaseline='alphabetic';
+  cx.fillStyle='rgba(143,160,200,.9)'; cx.font='600 11px system-ui';
+  cx.fillText('QUEMADOR · O₂', Q.x+14, Q.y+22);
+
+  const cxq = Q.x + Q.w/2, base = Q.y + Q.h*0.60;
+
+  // el mechero: un pie y una boquilla, siempre visibles
+  cx.fillStyle = 'rgba(150,170,210,.5)';
+  cx.fillRect(cxq-24, base+26, 48, 6);
+  cx.fillRect(cxq-5, base, 10, 28);
+
+  if (ardiendo){
+    // llama: dos lóbulos que laten, del color de la llama del elemento
+    const u = Q.t / QUEMA_MS, late = 1 + Math.sin(Q.t*0.045)*0.12;
+    const alto = Q.h*0.30*late*(1 - u*0.25);
+    cx.globalAlpha = 0.9;
+    cx.fillStyle = Q.color;
+    cx.beginPath();
+    cx.moveTo(cxq-15, base);
+    cx.quadraticCurveTo(cxq-20, base-alto*0.6, cxq, base-alto);
+    cx.quadraticCurveTo(cxq+20, base-alto*0.6, cxq+15, base);
+    cx.closePath(); cx.fill();
+    cx.fillStyle = Q.el.simbolo==='Mg' ? '#ffffff' : 'rgba(255,255,255,.75)';
+    cx.beginPath();
+    cx.moveTo(cxq-7, base);
+    cx.quadraticCurveTo(cxq-9, base-alto*0.4, cxq, base-alto*0.62);
+    cx.quadraticCurveTo(cxq+9, base-alto*0.4, cxq+7, base);
+    cx.closePath(); cx.fill();
+    cx.globalAlpha = 1;
+    cx.textAlign='center'; cx.fillStyle='#fff'; cx.font='600 12px system-ui';
+    cx.fillText('ardiendo…', cxq, Q.y+Q.h-16);
+
+  } else if (Q.fase === 'resultado'){
+    dibujarBalanza(Q);
+
+  } else {
+    cx.textAlign='center'; cx.fillStyle='rgba(160,180,220,.55)'; cx.font='12px system-ui';
+    cx.fillText('trae un metal', cxq, Q.y+Q.h-42);
+    cx.fillText('y quémalo', cxq, Q.y+Q.h-26);
+  }
+  cx.textAlign='left'; cx.textBaseline='alphabetic';
+}
+
+/* La tabla de masas: el corazón de la zona. Se lee de arriba abajo como una
+   suma de las de toda la vida, para que la conclusión sea inevitable. */
+function dibujarBalanza(Q){
+  const m = Q.masas, en = Q.enlace;
+  const x = Q.x + 14, ancho = Q.w - 28;
+  let y = Q.y + 46;
+  const fila = (etq, val, resalta) => {
+    cx.textAlign='left';
+    cx.fillStyle = resalta ? '#fff' : 'rgba(210,224,250,.85)';
+    cx.font = (resalta ? '700 ' : '') + '12px system-ui';
+    cx.fillText(etq, x, y);
+    cx.textAlign='right';
+    cx.fillText(val.toFixed(1)+' u', x+ancho, y);
+    y += 19;
+  };
+  fila((m.nM>1 ? m.nM+' × ' : '') + Q.el.nombre, m.mM, false);
+  fila('+ ' + (m.nO>1 ? m.nO+' × ' : '') + 'oxígeno', m.mO, false);
+  // la raya de la suma, como en el cuaderno
+  cx.strokeStyle='rgba(160,180,220,.45)'; cx.lineWidth=1;
+  cx.beginPath(); cx.moveTo(x, y-13); cx.lineTo(x+ancho, y-13); cx.stroke();
+  y += 3;
+  fila('= ' + conSub(en.formula), m.total, true);
+
+  cx.textAlign='center';
+  cx.fillStyle='#37d67a'; cx.font='600 11.5px system-ui';
+  const cxq = Q.x + Q.w/2;
+  cx.fillText('¡pesa MÁS que el metal!', cxq, y+4);
+  cx.fillStyle='rgba(200,215,245,.72)'; cx.font='11px system-ui';
+  cx.fillText('+'+m.gana.toFixed(0)+'% — se llevó el oxígeno', cxq, y+20);
+  // el polvo que queda
+  cx.fillStyle='rgba(235,240,255,.5)';
+  cx.beginPath(); cx.ellipse(cxq, Q.y+Q.h-20, Q.w*0.20, 6, 0, 0, 7); cx.fill();
+}
+
+/* ── dibujo de la electrólisis ─────────────────────────────────── */
+function dibujarElectrolisis(){
+  const E = S.electro; if (!E) return;
+
+  cx.fillStyle = 'rgba(10,16,36,.66)';
+  caja(E.x, E.y, E.w, E.h, 14); cx.fill();
+  cx.lineWidth = E.encendido ? 3 : 1.5;
+  cx.strokeStyle = E.completado ? 'rgba(55,214,122,.7)'
+                 : E.encendido ? 'rgba(255,214,80,.85)' : 'rgba(77,163,255,.45)';
+  caja(E.x, E.y, E.w, E.h, 14); cx.stroke();
+
+  cx.textAlign='left'; cx.textBaseline='alphabetic';
+  cx.fillStyle='rgba(143,160,200,.9)'; cx.font='600 11px system-ui';
+  cx.fillText('ELECTRÓLISIS · 2 H₂O → 2 H₂ + O₂', E.x+14, E.y+22);
+  // lo que hace que esta zona tenga sentido: es la mesa al revés
+  cx.fillStyle='rgba(160,180,220,.62)'; cx.font='10.5px system-ui';
+  cx.fillText('en la mesa juntaste H+H+O para hacer agua · aquí la separas', E.x+14, E.y+36);
+
+  // la cubeta con agua
+  const ax = E.x+14, aw = E.w-28;
+  cx.fillStyle = 'rgba(60,140,235,.20)';
+  caja(ax, E.yAgua, aw, E.hAgua, 8); cx.fill();
+  cx.strokeStyle = 'rgba(120,180,255,.35)'; cx.lineWidth=1.5;
+  caja(ax, E.yAgua, aw, E.hAgua, 8); cx.stroke();
+
+  // los dos tubos de recogida, uno por electrodo
+  tuboGas(E.xNeg, E, E.nH/ELEC_CAP, '#9fd8ff', 'H₂', E.nH);
+  tuboGas(E.xPos, E, E.nO/ELEC_CAP, '#ffd9a0', 'O₂', E.nO);
+
+  // los electrodos: dos barras que bajan al agua
+  for (const [x, signo, col] of [[E.xNeg,'−','#9fd8ff'], [E.xPos,'+','#ffd9a0']]){
+    cx.fillStyle = 'rgba(190,205,235,.75)';
+    cx.fillRect(x-3, E.yAgua+E.hAgua*0.30, 6, E.hAgua*0.52);
+    cx.textAlign='center'; cx.fillStyle=col; cx.font='700 13px system-ui';
+    cx.fillText(signo, x, E.yAgua+E.hAgua+16);
+  }
+
+  // el interruptor: diana grande, que se sostiene con el gesto
+  const enc = E.encendido;
+  cx.fillStyle = enc ? 'rgba(255,214,80,.30)' : 'rgba(30,41,73,.85)';
+  caja(E.swX, E.swY, E.swW, E.swH, 9); cx.fill();
+  cx.strokeStyle = enc ? '#ffd650' : 'rgba(140,170,220,.55)'; cx.lineWidth = enc?2.5:1.5;
+  caja(E.swX, E.swY, E.swW, E.swH, 9); cx.stroke();
+  cx.textAlign='center'; cx.textBaseline='middle';
+  cx.fillStyle = enc ? '#ffd650' : 'rgba(200,215,245,.8)';
+  cx.font='600 12px system-ui';
+  cx.fillText(enc ? '⚡ CORRIENTE' : 'aplicar corriente', E.swX+E.swW/2, E.swY+E.swH/2);
+  cx.textBaseline='alphabetic';
+
+  // el marcador 2:1, que es la lección
+  cx.textAlign='right'; cx.font='11.5px system-ui';
+  cx.fillStyle = E.completado ? '#37d67a' : 'rgba(200,215,245,.8)';
+  cx.fillText('H₂ '+E.nH+'  ·  O₂ '+E.nO+'   → 2 : 1', E.x+E.w-14, E.y+E.h-12);
+  cx.textAlign='left';
+}
+
+function tuboGas(x, E, llenado, color, etq, n){
+  const tw = 26, th = E.hAgua*0.55;
+  const ty = E.yAgua - th - 6;
+  cx.fillStyle = 'rgba(10,16,36,.5)';
+  caja(x-tw/2, ty, tw, th, 5); cx.fill();
+  const h = Math.max(0, Math.min(1, llenado)) * (th-4);
+  cx.fillStyle = color;
+  cx.globalAlpha = 0.55;
+  caja(x-tw/2+2, ty+th-2-h, tw-4, h, 4); cx.fill();
+  cx.globalAlpha = 1;
+  cx.strokeStyle = 'rgba(150,180,225,.5)'; cx.lineWidth=1.2;
+  caja(x-tw/2, ty, tw, th, 5); cx.stroke();
+  cx.textAlign='center'; cx.fillStyle=color; cx.font='600 11px system-ui';
+  cx.fillText(etq, x, ty-5);
+}
+
+/* ── los dos paneles laterales ─────────────────────────────────── */
+function mostrarCombustion(en, el, m){
+  const clave = 'QUEMA:'+en.formula;
+  if (clave === panelPintado) return;
+  panelPintado = clave;
+  const fila = (a,b,neg) => '<tr><td style="padding:2px 0">'+a+'</td>'+
+      '<td style="text-align:right;font-family:ui-monospace,monospace'+
+      (neg?';color:#37d67a;font-weight:700':'')+'">'+b+'</td></tr>';
+  let h = '<div style="display:flex;align-items:baseline;gap:10px">'+
+    '<div class="simbolo" style="color:#ff9f45">'+conSub(en.formula)+'</div>'+
+    '<div><div class="nombre">'+en.nombre+'</div>'+
+    '<div class="fam">Combustión de '+el.nombre+'</div></div></div>'+
+    '<div class="etq">Lo que acaba de pasar</div><div class="ec">'+conSub(en.ecuacion)+'</div>'+
+    '<div class="etq">Las cuentas</div>'+
+    '<table style="width:100%;font-size:13px;border-collapse:collapse">'+
+    fila((m.nM>1?m.nM+' × ':'')+el.nombre, m.mM.toFixed(1)+' u') +
+    fila('+ '+(m.nO>1?m.nO+' × ':'')+'oxígeno', m.mO.toFixed(1)+' u') +
+    '<tr><td colspan="2"><hr style="border:0;border-top:1px solid var(--borde);margin:4px 0"></td></tr>'+
+    fila('= '+conSub(en.formula), m.total.toFixed(1)+' u', true) +
+    '</table>'+
+    '<div class="pq" style="margin-top:9px">Quemar algo casi siempre parece que lo '+
+    'deja más ligero, porque queda un polvo. Pero la balanza dice lo contrario: '+
+    'el óxido pesa un <b>'+m.gana.toFixed(0)+'% más</b> que el metal. Esa masa de más '+
+    'es el oxígeno del aire, que ya no está en el aire: está en el polvo.</div>'+
+    '<div class="etq">Por qué se une</div><div class="pq">'+en.porQue+'</div>';
+  if (el.dato) h += '<div class="etq">Dato curioso</div><div class="pq">'+el.dato+'</div>';
+  h += '<div class="fuente">Masas atómicas sumadas desde los datos validados contra '+
+       '<a href="'+el.pubchem+'" target="_blank" rel="noopener">PubChem ↗</a>'+
+       ' — NCBI / National Library of Medicine</div>';
+  $('infoCuerpo').innerHTML = h;
+  $('infoCuerpo').className = '';
+}
+
+function mostrarElectrolisis(){
+  const E = S.electro;
+  const clave = 'ELEC:H2O';
+  if (clave === panelPintado) return;
+  panelPintado = clave;
+  $('infoCuerpo').innerHTML =
+    '<div style="display:flex;align-items:baseline;gap:10px">'+
+    '<div class="simbolo" style="color:#9fd8ff">H₂O</div>'+
+    '<div><div class="nombre">Electrólisis del agua</div>'+
+    '<div class="fam">Descomposición por corriente</div></div></div>'+
+    '<div class="etq">Lo que acaba de pasar</div>'+
+    '<div class="ec">2 H₂O → 2 H₂ + O₂</div>'+
+    '<div class="etq">Por qué 2 a 1</div>'+
+    '<div class="pq">Del electrodo negativo salieron <b>'+E.nH+'</b> burbujas de hidrógeno '+
+    'y del positivo <b>'+E.nO+'</b> de oxígeno: exactamente el doble. No es casualidad ni '+
+    'es el dibujo — es que cada molécula de agua lleva <b>dos</b> hidrógenos por <b>un</b> '+
+    'oxígeno. Contando burbujas se deduce la fórmula.</div>'+
+    '<div class="etq">Al revés que la mesa</div>'+
+    '<div class="pq">En la zona de enlace juntaste H + H + O y salió agua, y eso '+
+    '<b>libera</b> energía. Aquí hiciste lo contrario, y por eso hubo que <b>meter</b> '+
+    'energía con la corriente. Romper lo que está unido siempre cuesta lo que dio al unirse.</div>'+
+    '<div class="etq">Para qué sirve</div>'+
+    '<div class="pq">Así se fabrica el <b>hidrógeno verde</b>: si la corriente viene del sol '+
+    'o del viento, se obtiene combustible sin quemar nada. Es una de las apuestas para '+
+    'reemplazar el petróleo.</div>'+
+    '<div class="fuente">H₂O, H₂ y O₂ salen del mismo motor de enlaces del juego, '+
+    'validado contra PubChem (NCBI / National Library of Medicine)</div>';
+  $('infoCuerpo').className = '';
+}
+
 /* ── 5. LA REACCIÓN ────────────────────────────────────────────── */
 function lanzar(f){
   const el = f.el, v = S.vaso;
@@ -969,6 +1574,7 @@ function lanzar(f){
   }
 
   S.descubiertos.add(el.simbolo);
+  comprobarReto('agua', el.simbolo);
   $('cuenta').textContent = S.descubiertos.size;
   mostrarElemento(el, true);
 
@@ -1088,6 +1694,8 @@ function dibujar(){
   cx.clearRect(-30,-30,S.W+60,S.H+60);
   dibujarVaso();
   dibujarMesa();
+  dibujarQuemador();
+  dibujarElectrolisis();
   for (let i=0;i<nDest;i++){
     const d = destellos[i];
     cx.globalAlpha = d.vida*0.5;
@@ -1162,7 +1770,17 @@ function dibujarPuntero(){
 }
 
 /* ── 8. FÍSICA ─────────────────────────────────────────────────── */
+let tFisica = 0;
 function fisica(){
+  /* Las dos zonas nuevas necesitan tiempo real, no frames: si el ritmo de
+     burbujas dependiera de los fps, la proporción seguiría siendo 2:1 pero
+     la demostración duraría el doble en un equipo lento. */
+  const ahora = performance.now();
+  const dt = tFisica ? Math.min(50, ahora - tFisica) : 16.7;
+  tFisica = ahora;
+  atenderElectrolisis();
+  actualizarQuemador(dt);
+  actualizarElectrolisis(dt);
   S.agua.nivel += 0.055; S.agua.olas *= 0.955;
   S.sacudida *= 0.88; if (S.sacudida<0.15) S.sacudida=0;
   S.reaccionando *= 0.97;
@@ -2249,6 +2867,7 @@ function bucle(t){
   animarCarbonito(t);
   pintarMundo(t);
   if (DEBUG_PERF){ perf.carbo += performance.now()-m; perf.n++; }
+  actualizarReto(t);
   medirFrame(t);
 }
 
@@ -2461,11 +3080,14 @@ if (FERIA){
               ' s sin actividad, cámara con reintento, depuración apagada.');
 }
 
-$('btnVaciar').addEventListener('click', ()=>{ vaciarMesa(); panelPintado=''; });
+$('btnVaciar').addEventListener('click', ()=>{
+  vaciarMesa(); vaciarQuemador(); vaciarElectrolisis(); panelPintado='';
+});
 function reiniciarTodo(silencioso){
+  arrancarReto(0);
   S.descubiertos.clear(); S.compuestos.clear();
   $('cuenta').textContent='0'; $('cuentaC').textContent='0';
-  vaciarMesa();
+  vaciarMesa(); vaciarQuemador(); vaciarElectrolisis();
   nPart=0; nDest=0; panelPintado='';
   S.fichas.forEach(f=>{ f.x=f.casaX; f.y=f.casaY; });
   $('infoCuerpo').className='vacio';
@@ -2475,6 +3097,7 @@ function reiniciarTodo(silencioso){
 }
 $('btnReset').addEventListener('click', ()=>reiniciarTodo(false));
 $('total').textContent  = ELEMENTOS.length;
+arrancarReto(0);
 $('totalC').textContent = ENLACES.length;
 cargarProgreso();
 disponer();
