@@ -167,188 +167,18 @@
 <script src="retos.js"></script>
 <script>
 "use strict";
-/* ═══════════════════════════════════════════════════════════════
-   LABORATORIO PELIGROSO
-   Regla de oro: NADA falla en silencio. Todo error va a consola
-   Y a pantalla. Es justo lo que le faltó al proyecto anterior.
 
-   ── MEDICIONES (Chrome, ventana de 950x720, dpr 1.5, portátil sin GPU
-      dedicada). Mediana de 7 tandas; se midió ANTES de tocar nada y
-      después de cada cambio. Encender con  perfLab(true)  en consola.
-
-      Cambio                          antes        después
-      ─────────────────────────────────────────────────────────────
-      carbonito.glb (descarga)        83.88 MB     4.13 MB
-      vértices del modelo             1 176 990    344 406
-      texturas (VRAM estimada)        3x4096²      3x1024²
-                                      ~268 MB      ~17 MB
-      dibujar() en reposo             0.12 ms      0.12 ms  (igual)
-      dibujar() con 300 partículas
-        y 40 destellos                0.34 ms      0.23 ms
-      60 destellos en pantalla        0.145 ms     0.060 ms
-      desvanecer()                    0.002 ms     0.000 ms
-      situarGlobo()                   0.002 ms     0.000 ms
-      animarCarbonito() (lado CPU)    0.018 ms     0.018 ms
-      capa de manos, 2 manos          —            0.16 ms
-      frame completo, peor caso       —            0.41 ms
-
-   ── SEGUNDA RONDA (mesa de enlaces, 19 elementos, gestos) ───────
-      Misma máquina y mismo método. Lo nuevo no movió la aguja:
-
-      dibujar() en reposo                          0.09 ms
-      dibujar() con la mesa ocupada y un mensaje   0.11 ms
-      dibujar() con 300 partículas y 40 destellos  0.23 ms
-      capa de manos, 2 manos en cuadro             0.11 ms
-      animarCarbonito()                            0.02 ms
-      frame completo, peor caso                    0.35 ms
-      margen hasta los 16.7 ms de un frame a 60    16.3 ms
-
-   ── TERCERA RONDA (quemador y electrólisis) ─────────────────────
-      Las dos zonas nuevas no mueven la aguja: dibujar la balanza y los
-      tubos de gas cuesta 0.06 ms, y sus actualizadores no llegan a medirse.
-
-      dibujar() con las cuatro zonas vacías        0.15 ms
-      dibujar() con balanza puesta y electrólisis
-        en marcha                                  0.21 ms
-      dibujar() además con 300 partículas          0.26 ms
-      actualizarQuemador + actualizarElectrolisis  0.00 ms
-      capa de manos, 2 manos en cuadro             0.12 ms
-      frame completo, peor caso                    0.38 ms
-      margen hasta los 16.7 ms de un frame a 60    16.3 ms
-
-   ── LA PROPORCIÓN 2:1 DE LA ELECTRÓLISIS ────────────────────────
-   Contada de verdad, no "se ve parecido". 30 s de corriente continua:
-
-      frames estables (16.7 ms)    150 H · 75 O   razón 2.0000
-      frames irregulares (8-50 ms) 150 H · 75 O   razón 2.0000
-
-   Sale exacta porque el turno rota H, H, O en vez de sortearse: con azar
-   por frame la razón sería 2:1 "más o menos", y el más o menos es justo lo
-   que no sirve cuando la gracia es que el chico las cuente.
-
-   ── CUARTA RONDA (una estación a la vez) ────────────────────────
-   Antes se dibujaban las cuatro zonas a la vez y todas salían pequeñas.
-   Con una sola visible, el área que gana la estación activa a 1920x1080:
-
-      zona activa ahora            1178 x 489 = 576 042 px²
-      lo que tenía antes cada una:
-        vaso                        200 x 230 =  46 000 px²   (12.5x)
-        mesa de enlaces             460 x 156 =  71 760 px²   ( 8.0x)
-        quemador                    216 x 672 = 145 152 px²   ( 4.0x)
-        electrólisis                460 x 250 = 115 000 px²   ( 5.0x)
-
-   Coste: dibujar más superficie cuesta más relleno de píxeles, y eso se
-   nota. Sigue sobrando muchísimo margen.
-
-      dibujar() vaso / mesa / quemador / electrólisis  0.30 / 0.35 / 0.36 / 0.36 ms
-      dibujar() peor caso (balanza + 300 partículas)   0.48 ms
-      el selector con sus cuatro botones               0.14 ms
-      actualizarSelector (el dwell)                    0.00 ms
-      frame completo, peor caso                        0.63 ms
-      margen hasta los 16.7 ms de un frame a 60        16.07 ms
-
-   ── CARBONITO Y LA ESTACIÓN ─────────────────────────────────────
-   Su coronilla cae siempre en el 57.7% del alto (medido en 1024x600,
-   1280x720 y 1920x1080: solo depende del fov vertical). La estación se
-   corta ahí, y su carril lateral se calcula con su medio ancho REAL en
-   píxeles, que va de 103 px a 1024 hasta 186 px a 1920 — con un margen
-   fijo el hombro se le montaba en el selector en las resoluciones grandes.
-   Comprobado en las 4 estaciones x 3 resoluciones: 0 solapes, con 80 px de
-   holgura por arriba y 32 px con el selector en el peor caso.
-
-   ── QUINTA RONDA: SPRITES (1920x1080, dpr 2) ────────────────────
-   Con el frame ya en 0.6 ms no había prisa, pero el desglose fino enseñó que
-   el 96% de dibujar() se iba en dos sitios, y los dos eran texto:
-
-                            antes      después
-      las 19 fichas         0.279 ms   0.083 ms   (el símbolo era el 57%)
-      el selector           0.155 ms   0.009 ms   (los emoji, glifos en color)
-      dibujar() completo    0.453 ms   0.129 ms   (3.5x)
-
-   Los dos se arreglan igual: pintar una vez en un canvas fuera de pantalla y
-   luego un drawImage. Cuesta 2.75 MB de sprites (23 canvas) y las cachés se
-   tiran en disponer(), que es donde cambian radio, tamaño de botón y dpr.
-
-   ── LO QUE SE MIDIÓ Y NO SE TOCÓ ────────────────────────────────
-   Todo esto parecía mejorable y NO lo era. Queda anotado para que nadie lo
-   "optimice" a ciegas más adelante:
-
-      mundoRender.setSize() en cada cambio de estación   0.002 ms
-        (three.js no reescribe canvas.width si no cambia: no reasigna nada)
-      clearRect de pantalla completa                     0.002 ms
-      el marco grande de la estación (576 000 px)        0.006 ms
-      escribir style.left/top del globo por frame        0.001 ms
-      getElementById por frame                           ~0 ms
-      basura generada en estado estable                  62 B/frame
-        (a ese ritmo el recolector pasa una vez cada varios minutos)
-
-   Cambiar cx.font con una cadena nueva por ficha tampoco era el problema:
-   0.007 ms contra 0.003 con la cadena fija. Lo caro era rasterizar el glifo,
-   no parsear la fuente.
-
-   La mesa de enlaces cuesta 0.02 ms porque el texto se parte en líneas UNA
-   vez, al cambiar el mensaje, y no en cada frame: medir texto es de lo más
-   caro que tiene el canvas 2D.
-
-   Lecturas honestas de esos números:
-   · desvanecer() y situarGlobo() NO eran cuellos de botella (0.002 ms).
-     Se arreglaron igual porque asignaban objetos por frame, pero quien
-     costaba de verdad en Carbonito era la GPU: 1.18 M de vértices y
-     268 MB de texturas. Ahí está la mejora real.
-   · El degradado cacheado de las fichas no cambia el tiempo de pared a
-     esta escala (10 fichas); lo que quita son 10 asignaciones por frame.
-   · Las cifras de arriba son coste de CPU. Los fps reales dependen del
-     equipo y hay que verlos con perfLab(true) en la máquina de destino.
-
-   ── SEGUIMIENTO: LERP FIJO vs FILTRO ONE EURO ────────────────────
-   Medido simulando el camino completo de las dos versiones sobre la misma
-   señal (detección a 30 Hz + relleno de frames a 60 Hz):
-
-      Situación                       LERP 0.30    One Euro
-      ──────────────────────────────────────────────────────
-      temblor con la mano quieta       0.53 px      0.30 px
-      (entrada cruda: 1.17 px)
-      retraso durante un barrido
-      rápido (~1400 px/s)             48.6 px      32.3 px
-
-   Lo importante no es cada número por separado, es que mejoran LOS DOS a la
-   vez. Con un LERP eso no se puede: bajarle el factor quita temblor y añade
-   retraso, subírselo hace lo contrario. Por eso se cambió.
-
-   ── LO QUE SE EVALUÓ Y NO SE HIZO ────────────────────────────────
-   · Inferencia en un Web Worker con OffscreenCanvas. El criterio para
-     adoptarlo era ganar 10 fps o más en un equipo modesto, y ese criterio NO
-     se ha podido comprobar aquí: sin cámara no hay inferencia real que medir.
-     Adoptarlo a ciegas significaría meter transferencia de frames entre hilos
-     y duplicar el camino de datos del control por gestos a cambio de una
-     mejora sin verificar. Queda pendiente de medir con cámara y equipo real.
-   · RDKit.js en el navegador. Su build mínima son 6.9 MB de WASM más 128 KB
-     de JS (medido, no estimado). El juego entero pesa 4.1 MB. Las estructuras
-     2D se generan en tiempo de compilación con RDKit de escritorio y viajan
-     como SVG de unos KB — ver herramientas/generar_estructuras.py.
-   · worldLandmarks para escalar el cursor por distancia. Se lee y se deja a
-     la vista en perfLab(true), pero no se usa en el juego: el grosor del
-     esqueleto ya escala con el tamaño aparente de la mano y da el mismo
-     resultado sin un segundo camino de datos que mantener.
-   ═══════════════════════════════════════════════════════════════ */
 const cv = document.getElementById('juego');
 const cx = cv.getContext('2d');
 const cvM = document.getElementById('manos');            // capa RGB del tracking
 const cxM = cvM.getContext('2d', { alpha:true });
 const $  = id => document.getElementById(id);
 
-/* -- 0. MEDICION ------------------------------------------------
-   Nada se optimizo a ciegas: este flag imprime el desglose real del
-   frame. Se enciende sin recargar escribiendo  perfLab(true)  en consola.
-   Las llamadas a performance.now() viven dentro del if para no pagarlas
-   cuando esta apagado.                                              */
+                                             */
 let DEBUG_PERF = false;
-/* Modo feria: ?feria=1 en la URL. Se lee aquí arriba porque media docena de
-   sitios preguntan por él, y con const no vale declararlo más abajo (zona
-   muerta temporal: hasta un typeof lanzaría ReferenceError). */
+
 const FERIA = new URLSearchParams(location.search).get('feria') === '1';
-/* En feria el medidor se ignora: nadie debe poder dejar la consola escupiendo
-   métricas en mitad de una demostración. */
+
 window.perfLab = v => (DEBUG_PERF = FERIA ? false : (v !== false));
 const perf = { mano:0, dibujo:0, manos:0, carbo:0, n:0, corte:0, frames:0, fps:0 };
 function medirFrame(t){
@@ -378,9 +208,7 @@ function avisar(msg, tipo){
   if (tipo === 'err') console.error('[lab]', msg); else console.log('[lab]', msg);
 }
 
-/* ── 1. PUNTERO UNIFICADO ───────────────────────────────────────
-   El juego NUNCA pregunta si hay cámara. Solo lee este objeto.
-   Ratón y mano escriben aquí: mismo camino de código.           */
+
 const puntero = { x:0, y:0, activo:false, fuente:'raton', visto:false };
 
 const S = {
@@ -391,48 +219,27 @@ const S = {
 };
 const RAND = (a,b)=>a+Math.random()*(b-a);
 
-/* Alto reservado arriba para el panel de retos, que es HTML y flota sobre el
-   canvas. Antes la mesa empezaba en y=96 y el panel se le montaba encima en
-   cuanto salía la pista. Medido con título de dos líneas y pista visible. */
 const BANDA_RETO = 122;
 
-/* ── 1.c LAS ESTACIONES ─────────────────────────────────────────
-   Antes se dibujaban las cuatro a la vez y el resultado era un amontonamiento:
-   cuatro zonas de suelte simultáneas obligan a que todas sean pequeñas, y con
-   el puntero movido por una mano una diana pequeña no se acierta. Peor aún,
-   cada zona de más es un suelte accidental de más.
 
-   Ahora hay UNA visible y se queda con todo el espacio que dejan las otras
-   tres. La columna de elementos nunca se esconde: es la fuente de átomos.  */
 const ESTACIONES = [
   { id:'vaso',     nombre:'Vaso',         icono:'💧', reto:'agua' },
   { id:'mesa',     nombre:'Enlaces',      icono:'⚛',  reto:'enlace' },
   { id:'quemador', nombre:'Quemador',     icono:'🔥', reto:'quemar' },
   { id:'electro',  nombre:'Electrólisis', icono:'⚡', reto:'electrolisis' }
 ];
-/* Qué estación pide cada tipo de reto. Al arrancar un reto se activa sola:
-   el chico no tiene que adivinar dónde se suelta. */
+
 const ESTACION_DE_RETO = { agua:'vaso', enlace:'mesa', quemar:'quemador', electrolisis:'electro' };
 let estacionActiva = 'mesa';
 
-/* Activación por permanencia. Con la mano, un "clic" es poco fiable y se
-   dispara solo; quedarse quieto encima 0.6 s no. El anillo que se va
-   cerrando alrededor del botón es lo que hace que la espera se entienda. */
+
 const DWELL_MS = 600;
 const selector = { botones:[], sobre:-1, dwell:0, activoPrev:false };
 
-/* Dónde acaba la estación y empieza Carbonito. Medido: la coronilla de
-   Carbonito cae siempre en el 57.7% del alto de la escena, en las tres
-   resoluciones probadas (1024x600, 1280x720, 1920x1080), porque su tamaño
-   en pantalla solo depende del fov vertical de la cámara. Cortando ahí, la
-   estación se lleva todo lo de arriba y él pasea por debajo sin pisarla. */
+
 const TECHO_CARBONITO = 0.577;
 
-/* -- 1.b POOL DE PARTICULAS -------------------------------------
-   Antes cada reaccion hacia push de cientos de objetos y fisica() los
-   quitaba con splice: asignacion constante mas O(n) por borrado, o sea la
-   sierra de GC del perfil. Ahora los objetos se crean UNA vez y se
-   reciclan; borrar es traer la ultima viva al hueco (O(1)).          */
+
 const MAX_PART = 900, MAX_DEST = 240;
 const particulas = new Array(MAX_PART), destellos = new Array(MAX_DEST);
 for (let i=0;i<MAX_PART;i++) particulas[i]={x:0,y:0,vx:0,vy:0,vida:0,r:1,color:'#fff',tipo:'burbuja'};
@@ -441,7 +248,7 @@ let nPart=0, nDest=0;
 const nuevaParticula = ()=> nPart<MAX_PART ? particulas[nPart++] : null;
 const nuevoDestello  = ()=> nDest<MAX_DEST ? destellos[nDest++]  : null;
 
-/* ── 2. DISPOSICIÓN: columna a la izquierda, vaso abajo-izquierda ── */
+
 function disponer(){
   const r = cv.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio||1, 2);
@@ -449,22 +256,15 @@ function disponer(){
   cv.width = Math.round(r.width*dpr);
   cv.height = Math.round(r.height*dpr);
   cx.setTransform(dpr,0,0,dpr,0,0);
-  // la capa de manos comparte tamano y dpr con el juego: si divergen, el
-  // esqueleto se despega del puntero al redimensionar la ventana
+
   cvM.width = cv.width; cvM.height = cv.height;
   cxM.setTransform(dpr,0,0,dpr,0,0);
   calcularEncuadre();
-  /* Aquí cambian el radio de las fichas, el tamaño de los botones y el dpr:
-     todo lo que hay cacheado como sprite deja de servir. */
+
   cacheFichaLista.clear(); cacheBotones.clear();
 
   const n = ELEMENTOS.length;
-  /* El estante baja desde debajo del contador y se aparta del borde: con
-     seguimiento por cámara, alcanzar el filo de la pantalla obliga a estirar
-     el brazo fuera del encuadre cómodo.
-     Con 19 elementos una sola columna deja las fichas de 17 px pegadas unas a
-     otras en una pantalla de 720 de alto, así que a partir de 12 se parte en
-     dos columnas y cada ficha vuelve a tener tamaño de diana. */
+
   const arriba = 104, abajo = S.H - 46;
   const cols   = n > 12 ? 2 : 1;
   const porCol = Math.ceil(n/cols);
@@ -478,24 +278,10 @@ function disponer(){
     const X = colX - col*pasoX, Y = arriba + paso*(i%porCol);
     return { el, r:rad, casaX:X, casaY:Y, x:X, y:Y, escala:1 };
   });
-  // borde izquierdo del estante: las etiquetas se dibujan a su izquierda para
-  // que nunca se monten sobre la otra columna
+
   S.estanteIzq = colX - (cols-1)*pasoX - rad;
 
-  /* ── SELECTOR + ESTACIÓN ÚNICA ─────────────────────────────────
-     El selector va pegado al borde izquierdo, lo más lejos posible de la
-     columna de elementos: así el brazo no lo cruza al ir a por un átomo y no
-     se activa nada sin querer. Los botones son enormes a propósito — están
-     pensados para una mano temblando a un metro de la cámara.
 
-         ┌──────┬────────────────────────┬────────┐
-         │ 💧   │                        │        │
-         │ ⚛    │   ESTACIÓN ACTIVA      │ estante│
-         │ 🔥   │   (toda para ella)     │(fichas)│
-         │ ⚡   │                        │        │
-         ├──────┴────────────────────────┤        │
-         │   Carbonito pasea por aquí    │        │
-         └───────────────────────────────┴────────┘                       */
   const selW = Math.max(104, Math.min(152, S.W*0.10));
   const hueco = 12;
   const dispoSel = S.H - BANDA_RETO - 16;
@@ -505,8 +291,6 @@ function disponer(){
     x:16, y:BANDA_RETO + i*(altoBoton+hueco), w:selW, h:altoBoton
   }));
 
-  // Todo lo que queda entre el selector y el estante, hasta la línea de
-  // Carbonito, es de la estación activa.
   const zx = 16 + selW + 18;
   const Z = S.zona || (S.zona = {});
   Z.x = zx;
@@ -514,16 +298,13 @@ function disponer(){
   Z.y = BANDA_RETO;
   Z.h = Math.max(170, Math.floor(S.H*TECHO_CARBONITO) - 12 - Z.y);
 
-  /* Cada estación se calcula DENTRO de ese rectángulo, así que todas crecen
-     solas cuando hay más sitio. Las cuatro se recalculan aunque solo se vea
-     una: cuesta microsegundos y evita que la que no está activa quede con
-     geometría vieja si alguien la consulta. */
+
   const mesa = S.mesa || (S.mesa = { ranuras:[], enlace:null, error:'', lineas:[], destello:0, factor:1 });
   mesa.x = Z.x; mesa.y = Z.y; mesa.w = Z.w; mesa.h = Z.h;
   mesa.rs = Math.max(26, Math.min(64, Math.min(Z.w*0.085, Z.h*0.20)));
   envolverMensaje();
 
-  // el vaso, centrado y tan grande como permita el hueco
+
   const vw = Math.min(Z.w*0.52, Z.h*0.95);
   const vh = Math.min(Z.h*0.74, vw*1.25);
   S.vaso = { x: Z.x + Z.w/2 - vw/2, y: Z.y + Z.h*0.60 - vh/2 + 10, w:vw, h:vh };
@@ -547,12 +328,9 @@ function disponer(){
 }
 window.addEventListener('resize', disponer);
 
-/* Cambiar de estación. Es lo único que escribe en estacionActiva: el dwell,
-   el clic de ratón y el arranque de un reto pasan todos por aquí. */
 function activarEstacion(id, porElReto){
   if (id === estacionActiva) return;
-  /* Una ficha en la mano cuando desaparece la zona donde iba a soltarse se
-     queda flotando sobre una estación que ya no existe. Vuelve al estante. */
+
   if (S.agarrada){ volverACasa(S.agarrada); S.agarrada = null; }
   estacionActiva = id;
   S.tCambio = performance.now();
@@ -563,7 +341,6 @@ function activarEstacion(id, porElReto){
   if (!porElReto) S.ultimaAccion = Date.now();
 }
 
-/* Permanencia (dwell) y clic, los dos escribiendo en el mismo sitio. */
 function actualizarSelector(dt){
   const B = selector.botones;
   let sobre = -1;
@@ -645,11 +422,7 @@ function actualizarAgarre(){
   }
 }
 
-/* Color por FAMILIA, no por elemento. Enseñar que los alcalinos son "los
-   morados" y los gases nobles "los celestes" es media clase de tabla
-   periódica: el color deja de ser decoración y pasa a ser información.
-   El color CPK real de cada elemento sigue guardado en elementos.json
-   (validado contra PubChem); aquí solo mandamos en la presentación.      */
+
 const COLOR_FAMILIA = {
   alcalino:         '#a855f7',   // morado
   alcalinoterreo:   '#22c55e',   // verde
@@ -660,21 +433,10 @@ const COLOR_FAMILIA = {
   metal:            '#94a3b8',   // gris azulado
   metal_transicion: '#f43f5e'    // rojo
 };
-/* Ojo: esto decía `|| colorDe(el)`, que se llamaba a sí misma sin fin. No
-   reventaba porque las 19 familias del estante están todas en la tabla, pero
-   el primer elemento con familia nueva colgaba la pestaña. El respaldo es el
-   color CPK que ya trae el elemento. */
+
 const colorDe = el => COLOR_FAMILIA[el.familia] || el.color || '#888';
 
-/* ══ MODO RETO ════════════════════════════════════════════════════
-   El juego ya sabía enseñar "qué pasa si…". Esto le añade "qué tengo que
-   lograr", que es lo que convierte una colección en una partida y lo que
-   hace que una visita de feria tenga principio y final.
 
-   La pista NO sale al instante: aparece sola a los 30 s. Si se diera antes
-   no habría nada que pensar, y si no se diera nunca el chico se atasca y
-   abandona. Y nunca dice la respuesta: empuja hacia el razonamiento
-   (quién cede, quién capta) que es lo que se quiere enseñar.            */
 const RETO = { activo:true, i:0, resuelto:false, t0:0, pista:false, tLogro:0 };
 const MS_PISTA = 30000, MS_SIGUIENTE = 6500;
 
@@ -742,18 +504,7 @@ $('btnModoLibre').addEventListener('click', ()=>{
   if (RETO.activo) arrancarReto(RETO.i); else $('reto').classList.add('oculto');
 });
 
-/* ══ VISOR 3D DEL PANEL ═══════════════════════════════════════════
-   Muestra el átomo (modelo de Bohr) o el compuesto formado.
 
-   Se dibuja con el MISMO WebGLRenderer que Carbonito, usando una esquina
-   del canvas grande como viewport y copiando esa región al canvas 2D del
-   panel. El proyecto original creaba un renderer por cada elemento que se
-   señalaba y agotaba los contextos WebGL del navegador ("Too many active
-   WebGL contexts"): esto no puede volver a pasar porque el renderer sigue
-   siendo uno solo.
-
-   Orden importante: primero se pinta la esquina y se copia, y DESPUÉS la
-   escena principal encima. Así la esquina queda tapada y no se ve.       */
 const VIS_W = 300, VIS_H = 190;
 let escenaVis=null, camVis=null, grupoVis=null, cvVis=null, cxVis=null, visActivo=false;
 let visClave='';
@@ -2983,10 +2734,7 @@ function volcarPuntero(M, t){
    cachear landmarks viejos (cachearlos se notaría como retraso al agarrar). */
 function suavizarPuntero(){
   if (puntero.fuente !== 'mano' || !puntero.visto) return;
-  /* Esto ya NO es el suavizado: de eso se encarga el One Euro al llegar cada
-     detección. Aquí solo se rellenan los frames intermedios para que el
-     puntero no vaya a 30 Hz a ojos vistas. Por eso el factor es alto: cuanto
-     antes alcance el objetivo ya filtrado, menos retraso se añade. */
+
   pinza.sx += (pinza.dx - pinza.sx) * 0.5;
   pinza.sy += (pinza.dy - pinza.sy) * 0.5;
   puntero.x = pinza.sx; puntero.y = pinza.sy;
@@ -3001,14 +2749,7 @@ function suavizarPuntero(){
   puntero.activo = pinza.cerrada && pinza.perdidos <= 4;
 }
 
-/* ── 10.c DIBUJO RGB ────────────────────────────────────────────
-   Un tono por dedo. El glow se hace con dos pasadas (una gruesa y
-   translúcida debajo, otra fina y brillante encima) y composición
-   'lighter', NO con shadowBlur. Medido sobre los 21 huesos de UNA mano:
-   dos pasadas 0.016 ms, shadowBlur 0.099 ms. Seis veces más caro, y con
-   dos manos en cuadro y los halos encima la diferencia se multiplica.  */
-/* Perilla única del brillo. 1 = como estaba (demasiado). Bajarlo apaga el
-   efecto y además ahorra relleno de píxeles, que es lo que costaba fps. */
+
 const BRILLO_RGB = 0.5;
 const TONOS = [0, 60, 140, 210, 285, 190];   // pulgar, índice, medio, anular, meñique, palma
 const colGrueso = [], colFino = [], colPunto = [], halos = [];
@@ -3018,9 +2759,7 @@ for (let d=0; d<6; d++){
 let tonoPintado = -999;
 
 function refrescarPaleta(deriva){
-  /* Rehacer las cadenas 'hsl(...)' y los halos en cada frame sería basura
-     constante para el GC. Solo se rehacen cuando la deriva se movió lo
-     bastante para que el ojo lo note (3°), o sea ~4 veces por segundo.   */
+
   if (Math.abs(deriva - tonoPintado) < 3) return;
   tonoPintado = deriva;
   for (let d=0; d<6; d++){
@@ -3065,8 +2804,7 @@ function dibujarManos(t){
 
 function pintarMano(M, t){
   const px = M.px, py = M.py;
-  // el detector va a 30 Hz sobre un vídeo que sí se ve fluido: se interpola
-  // en cada frame para que el esqueleto no vaya a saltos respecto a la imagen
+
   for (let i=0;i<N_PUNTOS;i++){
     px[i] += (M.tx[i]-px[i])*0.45;
     py[i] += (M.ty[i]-py[i])*0.45;
@@ -3151,12 +2889,7 @@ function bucle(t){
   medirFrame(t);
 }
 
-/* ── 12. ARRANQUE ──────────────────────────────────────────────── */
-/* ── 13. SONIDO ─────────────────────────────────────────────────
-   Sintetizado con Web Audio, sin un solo archivo: el prototipo tiene que
-   seguir siendo una carpeta que se abre con `npx serve`. Arranca en silencio
-   porque las políticas de autoplay no dejan sonar nada hasta que el usuario
-   toque algo, y porque en un aula el sonido lo enciende el profesor.       */
+
 const audio = { ctx:null, on:false };
 
 function encenderAudio(){
@@ -3171,8 +2904,7 @@ function encenderAudio(){
   return true;
 }
 
-/* Ruido blanco reutilizable: generar el buffer en cada golpe sería tirar
-   memoria en el momento justo en que hay 200 partículas en pantalla. */
+
 let bufRuido = null;
 function ruido(){
   if (bufRuido) return bufRuido;
@@ -3183,11 +2915,7 @@ function ruido(){
   return bufRuido;
 }
 
-/* Un sonido por intensidad de reacción (1 a 5):
-     1-2  burbujeo: ruido por un pasabanda estrecho y grave, entrada suave
-     3    mezcla de los dos
-     4-5  golpe: ruido de banda ancha con envolvente rapidísima y un tumbo
-          grave debajo, que es lo que da la sensación de explosión         */
+
 function sonarReaccion(nivel){
   if (!audio.on || !audio.ctx) return;
   const c = audio.ctx, t0 = c.currentTime;
@@ -3221,8 +2949,7 @@ function sonarReaccion(nivel){
   src.start(t0); src.stop(t0+dur+0.05);
 }
 
-/* Compuesto formado: dos notas limpias hacia arriba, que suene a acierto y no
-   a explosión. */
+
 function sonarEnlace(){
   if (!audio.on || !audio.ctx) return;
   const c = audio.ctx, t0 = c.currentTime;
@@ -3247,10 +2974,7 @@ $('btnSonido').addEventListener('click', ()=>{
   }
 });
 
-/* ── 14. PROGRESO GUARDADO ──────────────────────────────────────
-   Un F5 en plena feria no puede borrar lo que la clase lleva descubierto.
-   Todo va envuelto: en modo incógnito o con las cookies bloqueadas,
-   localStorage lanza excepción con solo tocarlo.                          */
+
 const CLAVE_GUARDADO = 'laboratorio-peligroso-v1';
 function guardarProgreso(){
   try{
@@ -3274,11 +2998,7 @@ function cargarProgreso(){
   }catch(e){ console.warn('[lab] no se pudo leer el progreso:', e.message||e); }
 }
 
-/* ── 15. CAPTURA ────────────────────────────────────────────────
-   Las cuatro capas están en canvas distintos, así que hay que componerlas.
-   El canvas WebGL se vuelve a pintar justo antes: sin preserveDrawingBuffer
-   su contenido ya no está disponible una vez compuesto el frame, y saldría
-   Carbonito en negro.                                                      */
+
 $('btnFoto').addEventListener('click', ()=>{
   try{
     const o = document.createElement('canvas');
@@ -3307,9 +3027,7 @@ $('btnFoto').addEventListener('click', ()=>{
   }
 });
 
-/* ── 16. MODO FERIA (?feria=1) ──────────────────────────────────
-   Para ferias y colegios, donde nadie va a estar mirando el navegador.
-   La bandera FERIA se declara arriba del archivo, junto a DEBUG_PERF.     */
+
 const FERIA_INACTIVIDAD = 90000;      // 90 s sin tocar nada y vuelve a empezar
 const FERIA_REINTENTOS  = 6;          // intentos de recuperar la cámara perdida
 let feriaReintentos = 0, feriaTimer = null;
@@ -3325,9 +3043,7 @@ function vigilarFeria(){
   }
 }
 
-/* La cámara se cae sola en las ferias: un cable que alguien roza, un hub USB
-   que se satura. Se reintenta sin molestar; si no vuelve, se sigue con ratón,
-   que es la razón de que el juego nunca dependa de la cámara. */
+
 function vigilarCamara(){
   if (!camActiva) return;
   const v = $('video');
@@ -3348,8 +3064,7 @@ setInterval(()=>{ vigilarFeria(); if (FERIA) vigilarCamara(); }, 2000);
 
 if (FERIA){
   document.body.classList.add('feria');
-  // Hasta donde el navegador permite: F11 y los atajos de cierre se comen
-  // aquí; salir del pantalla completa de verdad solo lo decide el navegador.
+
   window.addEventListener('keydown', ev=>{
     if (ev.key==='F11' || ((ev.ctrlKey||ev.metaKey) && ['w','r','n','t'].indexOf(ev.key.toLowerCase())>=0)){
       ev.preventDefault(); ev.stopPropagation();
@@ -3388,3 +3103,5 @@ console.log('[lab] Listo. Elementos:', ELEMENTOS.length, '| Principio:', PRINCIP
 </script>
 </body>
 </html>
+
+
