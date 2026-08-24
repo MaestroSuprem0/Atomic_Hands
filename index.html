@@ -20,10 +20,7 @@
   #app{display:flex;height:100vh;width:100vw}
   #escena{flex:1;position:relative;min-width:0;overflow:hidden}
 
-  /* ── CAPAS, de atrás hacia adelante ──
-     1 video (cámara)  2 Carbonito 3D  3 manos RGB  4 juego 2D  5 globo de diálogo
-     Las manos van DEBAJO del juego a propósito: las fichas y el puntero tienen que
-     seguir leyéndose aunque el esqueleto pase por encima del vaso. */
+
   #video       {position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
                 transform:scaleX(-1);opacity:.32;display:none;z-index:1}
   #mundo3d     {position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
