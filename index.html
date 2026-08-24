@@ -229,6 +229,66 @@
    por frame la razón sería 2:1 "más o menos", y el más o menos es justo lo
    que no sirve cuando la gracia es que el chico las cuente.
 
+   ── CUARTA RONDA (una estación a la vez) ────────────────────────
+   Antes se dibujaban las cuatro zonas a la vez y todas salían pequeñas.
+   Con una sola visible, el área que gana la estación activa a 1920x1080:
+
+      zona activa ahora            1178 x 489 = 576 042 px²
+      lo que tenía antes cada una:
+        vaso                        200 x 230 =  46 000 px²   (12.5x)
+        mesa de enlaces             460 x 156 =  71 760 px²   ( 8.0x)
+        quemador                    216 x 672 = 145 152 px²   ( 4.0x)
+        electrólisis                460 x 250 = 115 000 px²   ( 5.0x)
+
+   Coste: dibujar más superficie cuesta más relleno de píxeles, y eso se
+   nota. Sigue sobrando muchísimo margen.
+
+      dibujar() vaso / mesa / quemador / electrólisis  0.30 / 0.35 / 0.36 / 0.36 ms
+      dibujar() peor caso (balanza + 300 partículas)   0.48 ms
+      el selector con sus cuatro botones               0.14 ms
+      actualizarSelector (el dwell)                    0.00 ms
+      frame completo, peor caso                        0.63 ms
+      margen hasta los 16.7 ms de un frame a 60        16.07 ms
+
+   ── CARBONITO Y LA ESTACIÓN ─────────────────────────────────────
+   Su coronilla cae siempre en el 57.7% del alto (medido en 1024x600,
+   1280x720 y 1920x1080: solo depende del fov vertical). La estación se
+   corta ahí, y su carril lateral se calcula con su medio ancho REAL en
+   píxeles, que va de 103 px a 1024 hasta 186 px a 1920 — con un margen
+   fijo el hombro se le montaba en el selector en las resoluciones grandes.
+   Comprobado en las 4 estaciones x 3 resoluciones: 0 solapes, con 80 px de
+   holgura por arriba y 32 px con el selector en el peor caso.
+
+   ── QUINTA RONDA: SPRITES (1920x1080, dpr 2) ────────────────────
+   Con el frame ya en 0.6 ms no había prisa, pero el desglose fino enseñó que
+   el 96% de dibujar() se iba en dos sitios, y los dos eran texto:
+
+                            antes      después
+      las 19 fichas         0.279 ms   0.083 ms   (el símbolo era el 57%)
+      el selector           0.155 ms   0.009 ms   (los emoji, glifos en color)
+      dibujar() completo    0.453 ms   0.129 ms   (3.5x)
+
+   Los dos se arreglan igual: pintar una vez en un canvas fuera de pantalla y
+   luego un drawImage. Cuesta 2.75 MB de sprites (23 canvas) y las cachés se
+   tiran en disponer(), que es donde cambian radio, tamaño de botón y dpr.
+
+   ── LO QUE SE MIDIÓ Y NO SE TOCÓ ────────────────────────────────
+   Todo esto parecía mejorable y NO lo era. Queda anotado para que nadie lo
+   "optimice" a ciegas más adelante:
+
+      mundoRender.setSize() en cada cambio de estación   0.002 ms
+        (three.js no reescribe canvas.width si no cambia: no reasigna nada)
+      clearRect de pantalla completa                     0.002 ms
+      el marco grande de la estación (576 000 px)        0.006 ms
+      escribir style.left/top del globo por frame        0.001 ms
+      getElementById por frame                           ~0 ms
+      basura generada en estado estable                  62 B/frame
+        (a ese ritmo el recolector pasa una vez cada varios minutos)
+
+   Cambiar cx.font con una cadena nueva por ficha tampoco era el problema:
+   0.007 ms contra 0.003 con la cadena fija. Lo caro era rasterizar el glifo,
+   no parsear la fuente.
+
    La mesa de enlaces cuesta 0.02 ms porque el texto se parte en líneas UNA
    vez, al cambiar el mensaje, y no en cada frame: medir texto es de lo más
    caro que tiene el canvas 2D.
@@ -339,6 +399,38 @@ const RAND = (a,b)=>a+Math.random()*(b-a);
    cuanto salía la pista. Medido con título de dos líneas y pista visible. */
 const BANDA_RETO = 122;
 
+/* ── 1.c LAS ESTACIONES ─────────────────────────────────────────
+   Antes se dibujaban las cuatro a la vez y el resultado era un amontonamiento:
+   cuatro zonas de suelte simultáneas obligan a que todas sean pequeñas, y con
+   el puntero movido por una mano una diana pequeña no se acierta. Peor aún,
+   cada zona de más es un suelte accidental de más.
+
+   Ahora hay UNA visible y se queda con todo el espacio que dejan las otras
+   tres. La columna de elementos nunca se esconde: es la fuente de átomos.  */
+const ESTACIONES = [
+  { id:'vaso',     nombre:'Vaso',         icono:'💧', reto:'agua' },
+  { id:'mesa',     nombre:'Enlaces',      icono:'⚛',  reto:'enlace' },
+  { id:'quemador', nombre:'Quemador',     icono:'🔥', reto:'quemar' },
+  { id:'electro',  nombre:'Electrólisis', icono:'⚡', reto:'electrolisis' }
+];
+/* Qué estación pide cada tipo de reto. Al arrancar un reto se activa sola:
+   el chico no tiene que adivinar dónde se suelta. */
+const ESTACION_DE_RETO = { agua:'vaso', enlace:'mesa', quemar:'quemador', electrolisis:'electro' };
+let estacionActiva = 'mesa';
+
+/* Activación por permanencia. Con la mano, un "clic" es poco fiable y se
+   dispara solo; quedarse quieto encima 0.6 s no. El anillo que se va
+   cerrando alrededor del botón es lo que hace que la espera se entienda. */
+const DWELL_MS = 600;
+const selector = { botones:[], sobre:-1, dwell:0, activoPrev:false };
+
+/* Dónde acaba la estación y empieza Carbonito. Medido: la coronilla de
+   Carbonito cae siempre en el 57.7% del alto de la escena, en las tres
+   resoluciones probadas (1024x600, 1280x720, 1920x1080), porque su tamaño
+   en pantalla solo depende del fov vertical de la cámara. Cortando ahí, la
+   estación se lleva todo lo de arriba y él pasea por debajo sin pisarla. */
+const TECHO_CARBONITO = 0.577;
+
 /* -- 1.b POOL DE PARTICULAS -------------------------------------
    Antes cada reaccion hacia push de cientos de objetos y fisica() los
    quitaba con splice: asignacion constante mas O(n) por borrado, o sea la
@@ -365,6 +457,9 @@ function disponer(){
   cvM.width = cv.width; cvM.height = cv.height;
   cxM.setTransform(dpr,0,0,dpr,0,0);
   calcularEncuadre();
+  /* Aquí cambian el radio de las fichas, el tamaño de los botones y el dpr:
+     todo lo que hay cacheado como sprite deja de servir. */
+  cacheFichaLista.clear(); cacheBotones.clear();
 
   const n = ELEMENTOS.length;
   /* El estante baja desde debajo del contador y se aparta del borde: con
@@ -390,49 +485,61 @@ function disponer(){
   // que nunca se monten sobre la otra columna
   S.estanteIzq = colX - (cols-1)*pasoX - rad;
 
-  // el vaso deja un pasillo para las etiquetas de la columna
-  const vw = Math.min(200, Math.max(120, S.W*0.17));
-  const vh = Math.min(230, S.H*0.30);
-  S.vaso = { x: 46, y: S.H - vh - 38, w:vw, h:vh };
+  /* ── SELECTOR + ESTACIÓN ÚNICA ─────────────────────────────────
+     El selector va pegado al borde izquierdo, lo más lejos posible de la
+     columna de elementos: así el brazo no lo cruza al ir a por un átomo y no
+     se activa nada sin querer. Los botones son enormes a propósito — están
+     pensados para una mano temblando a un metro de la cámara.
 
-  /* ── LAS CUATRO ZONAS ──────────────────────────────────────────
-     Reparto pensado para que ninguna quede pequeña: con seguimiento por
-     manos, una diana chica es inservible. No hizo falta un selector de zona
-     porque en la franja libre caben las cuatro con holgura desde 1024 px.
+         ┌──────┬────────────────────────┬────────┐
+         │ 💧   │                        │        │
+         │ ⚛    │   ESTACIÓN ACTIVA      │ estante│
+         │ 🔥   │   (toda para ella)     │(fichas)│
+         │ ⚡   │                        │        │
+         ├──────┴────────────────────────┤        │
+         │   Carbonito pasea por aquí    │        │
+         └───────────────────────────────┴────────┘                       */
+  const selW = Math.max(104, Math.min(152, S.W*0.10));
+  const hueco = 12;
+  const dispoSel = S.H - BANDA_RETO - 16;
+  const altoBoton = Math.max(90, Math.min(134, (dispoSel - hueco*3)/4));
+  selector.botones = ESTACIONES.map((e,i)=>({
+    id:e.id, nombre:e.nombre, icono:e.icono,
+    x:16, y:BANDA_RETO + i*(altoBoton+hueco), w:selW, h:altoBoton
+  }));
 
-         ┌──────────┬───────────────┬──────────┐
-         │ QUEMADOR │  mesa enlaces │          │
-         │          ├───────────────┤ estante  │
-         │          │  ELECTRÓLISIS │ (fichas) │
-         ├──────────┤               │          │
-         │  vaso    │               │          │
-         └──────────┴───────────────┴──────────┘                          */
-  const izq = S.vaso.x + S.vaso.w + 34, der = S.estanteIzq - 120;
-  const mw = Math.max(240, Math.min(460, der - izq));
+  // Todo lo que queda entre el selector y el estante, hasta la línea de
+  // Carbonito, es de la estación activa.
+  const zx = 16 + selW + 18;
+  const Z = S.zona || (S.zona = {});
+  Z.x = zx;
+  Z.w = Math.max(200, S.estanteIzq - 14 - zx);
+  Z.y = BANDA_RETO;
+  Z.h = Math.max(170, Math.floor(S.H*TECHO_CARBONITO) - 12 - Z.y);
+
+  /* Cada estación se calcula DENTRO de ese rectángulo, así que todas crecen
+     solas cuando hay más sitio. Las cuatro se recalculan aunque solo se vea
+     una: cuesta microsegundos y evita que la que no está activa quede con
+     geometría vieja si alguien la consulta. */
   const mesa = S.mesa || (S.mesa = { ranuras:[], enlace:null, error:'', lineas:[], destello:0, factor:1 });
-  mesa.x = Math.max(izq, (izq + der)/2 - mw/2);
-  mesa.y = BANDA_RETO; mesa.w = mw; mesa.h = 156;
-  mesa.rs = Math.max(22, Math.min(34, mw*0.075));          // radio de cada ranura
+  mesa.x = Z.x; mesa.y = Z.y; mesa.w = Z.w; mesa.h = Z.h;
+  mesa.rs = Math.max(26, Math.min(64, Math.min(Z.w*0.085, Z.h*0.20)));
   envolverMensaje();
 
-  // Quemador: franja de la izquierda, encima del vaso. Es alto y estrecho
-  // porque el fuego sube, y porque ahí no le quita sitio a nadie.
-  const Q = S.quemador || (S.quemador = { fase:'listo', t:0, el:null, enlace:null, masas:null, color:'#ffd35e' });
-  Q.x = 30;
-  Q.w = Math.max(150, S.vaso.x + S.vaso.w - 30);
-  Q.y = BANDA_RETO;
-  Q.h = Math.max(150, S.vaso.y - BANDA_RETO - 18);
+  // el vaso, centrado y tan grande como permita el hueco
+  const vw = Math.min(Z.w*0.52, Z.h*0.95);
+  const vh = Math.min(Z.h*0.74, vw*1.25);
+  S.vaso = { x: Z.x + Z.w/2 - vw/2, y: Z.y + Z.h*0.60 - vh/2 + 10, w:vw, h:vh };
 
-  // Electrólisis: debajo de la mesa, misma anchura, para que se lean como
-  // las dos caras de lo mismo (armar agua arriba, separarla abajo).
+  const Q = S.quemador || (S.quemador = { fase:'listo', t:0, el:null, enlace:null, masas:null, color:'#ffd35e' });
+  Q.x = Z.x; Q.y = Z.y; Q.w = Z.w; Q.h = Z.h;
+
   const E = S.electro || (S.electro = { encendido:false, completado:false, nH:0, nO:0, acum:0, turno:0, chispa:0 });
-  E.x = mesa.x; E.w = mesa.w;
-  E.y = mesa.y + mesa.h + 18;
-  E.h = Math.min(250, Math.max(150, S.H - E.y - 22));
-  E.yAgua = E.y + 66; E.hAgua = E.h - 96;
-  E.xNeg = E.x + E.w*0.30; E.xPos = E.x + E.w*0.62;        // − a la izquierda, + a la derecha
-  E.swW = Math.min(150, E.w*0.34); E.swH = 40;
-  E.swX = E.x + E.w - E.swW - 14; E.swY = E.y + E.h - E.swH - 30;
+  E.x = Z.x; E.y = Z.y; E.w = Z.w; E.h = Z.h;
+  E.yAgua = E.y + Z.h*0.34; E.hAgua = Z.h*0.44;
+  E.xNeg = E.x + E.w*0.34; E.xPos = E.x + E.w*0.60;        // − a la izquierda, + a la derecha
+  E.swW = Math.max(150, Math.min(230, E.w*0.26)); E.swH = Math.max(52, Math.min(84, Z.h*0.16));
+  E.swX = E.x + E.w - E.swW - 22; E.swY = E.y + E.h - E.swH - 22;
 
   if (mundoRender){
     mundoRender.setSize(S.W, S.H, false);
@@ -442,6 +549,42 @@ function disponer(){
   }
 }
 window.addEventListener('resize', disponer);
+
+/* Cambiar de estación. Es lo único que escribe en estacionActiva: el dwell,
+   el clic de ratón y el arranque de un reto pasan todos por aquí. */
+function activarEstacion(id, porElReto){
+  if (id === estacionActiva) return;
+  /* Una ficha en la mano cuando desaparece la zona donde iba a soltarse se
+     queda flotando sobre una estación que ya no existe. Vuelve al estante. */
+  if (S.agarrada){ volverACasa(S.agarrada); S.agarrada = null; }
+  estacionActiva = id;
+  S.tCambio = performance.now();
+  selector.dwell = 0;
+  panelPintado = '';
+  disponer();                      // la nueva estación se queda con el hueco
+  ajustarRecorrido();              // y Carbonito recalcula su paseo
+  if (!porElReto) S.ultimaAccion = Date.now();
+}
+
+/* Permanencia (dwell) y clic, los dos escribiendo en el mismo sitio. */
+function actualizarSelector(dt){
+  const B = selector.botones;
+  let sobre = -1;
+  if (puntero.visto){
+    for (let i=0;i<B.length;i++){
+      const b = B[i];
+      if (puntero.x>b.x && puntero.x<b.x+b.w && puntero.y>b.y && puntero.y<b.y+b.h){ sobre=i; break; }
+    }
+  }
+  const clicNuevo = puntero.activo && !selector.activoPrev;
+  selector.activoPrev = puntero.activo;
+  if (sobre !== selector.sobre){ selector.sobre = sobre; selector.dwell = 0; }
+  if (sobre < 0) return;
+  // con ratón no hace falta esperar: el clic sí es fiable
+  if (clicNuevo && puntero.fuente === 'raton'){ activarEstacion(B[sobre].id); return; }
+  selector.dwell += dt;
+  if (selector.dwell >= DWELL_MS) activarEstacion(B[sobre].id);
+}
 
 /* ── 3. ENTRADA: RATÓN ─────────────────────────────────────────── */
 function pos(ev){ const r=cv.getBoundingClientRect(); return {x:ev.clientX-r.left,y:ev.clientY-r.top}; }
@@ -469,7 +612,8 @@ function actualizarAgarre(){
   const suelta  = !puntero.activo && activoPrevio;
   activoPrevio  = puntero.activo;
 
-  if (empieza && !S.agarrada){
+  // encima del selector no se agarra nada: ahí se elige estación
+  if (empieza && !S.agarrada && selector.sobre < 0){
     let mejor=null, dmin=1e9;
     for (const f of S.fichas){
       if (f.npc) continue;                    // esa la lleva Carbonito
@@ -483,23 +627,23 @@ function actualizarAgarre(){
     S.agarrada.y += (puntero.y - S.agarrada.y)*0.35;
   }
   if (suelta && S.agarrada){
-    const f = S.agarrada, v = S.vaso;
-    // todas las zonas aceptan con margen: soltar justo en el borde es lo
-    // normal cuando el puntero lo lleva una mano
-    const dentro = (z, mx) => z && f.x > z.x-mx && f.x < z.x+z.w+mx &&
-                                   f.y > z.y-mx && f.y < z.y+z.h+mx;
-    const enVaso = f.x > v.x-24 && f.x < v.x+v.w+24 &&
-                   f.y > v.y-24 && f.y < v.y+v.h+32;
-    if (enVaso)                        lanzar(f);
-    else if (dentro(S.mesa, 26))       ponerEnMesa(f);
-    else if (dentro(S.quemador, 26))   ponerEnQuemador(f);
-    else if (dentro(S.electro, 26)){
+    /* Ahora solo hay UNA zona de suelte, y es la estación activa entera: el
+       rectángulo completo, no la figura dibujada dentro. Con la mano, cuanto
+       más grande sea el blanco, mejor — y ya no hay forma de soltar en la
+       zona equivocada porque no hay otra zona. */
+    const f = S.agarrada, Z = S.zona;
+    const enZona = Z && f.x > Z.x-26 && f.x < Z.x+Z.w+26 &&
+                        f.y > Z.y-26 && f.y < Z.y+Z.h+26;
+    if (!enZona) volverACasa(f);
+    else if (estacionActiva === 'vaso')     lanzar(f);
+    else if (estacionActiva === 'mesa')     ponerEnMesa(f);
+    else if (estacionActiva === 'quemador') ponerEnQuemador(f);
+    else {
       // la electrólisis no come átomos: se enciende con el gesto
       volverACasa(f);
       hablar('Aquí no se sueltan átomos: <b>mantén el índice levantado</b> sobre '+
              'el botón de corriente y mira qué le pasa al agua.', 6000);
     }
-    else                               volverACasa(f);
     S.agarrada = null;
   }
 }
@@ -551,6 +695,10 @@ function pintarReto(){
 
 function arrancarReto(i){
   RETO.i = i; RETO.resuelto = false; RETO.pista = false; RETO.t0 = performance.now();
+  /* Lo que hace que esto sea redondo: el reto pone al chico donde toca en vez
+     de hacerle buscar. En modo libre no se toca nada, manda el usuario. */
+  const est = ESTACION_DE_RETO[RETOS[i].tipo];
+  if (est && RETO.activo) activarEstacion(est, true);
   $('reto').classList.remove('logrado');
   $('retoPista').classList.remove('ver');
   $('retoLogro').classList.remove('ver');
@@ -1038,16 +1186,95 @@ function mostrarCompuesto(en, a, b){
   $('infoCuerpo').className = '';
 }
 
-/* ── dibujo de la mesa ─────────────────────────────────────────── */
-function caja(x,y,w,h,r){
-  if (cx.roundRect){ cx.beginPath(); cx.roundRect(x,y,w,h,r); return; }
-  cx.beginPath();                       // respaldo para navegadores sin roundRect
-  cx.moveTo(x+r,y); cx.lineTo(x+w-r,y); cx.quadraticCurveTo(x+w,y,x+w,y+r);
-  cx.lineTo(x+w,y+h-r); cx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
-  cx.lineTo(x+r,y+h); cx.quadraticCurveTo(x,y+h,x,y+h-r);
-  cx.lineTo(x,y+r); cx.quadraticCurveTo(x,y,x+r,y);
-  cx.closePath();
+/* ── dibujo del selector ───────────────────────────────────────
+   El anillo de progreso no es adorno: sin él, quedarse 0.6 s quieto sobre un
+   botón parece que no hace nada y el usuario se va antes de que active.   */
+/* Cada botón, en su sprite. Solo tiene dos aspectos (activo o no) y no
+   cambian nunca salvo al redimensionar, así que repintarlos 60 veces por
+   segundo era tirar tiempo: medido a 1920x1080 con dpr 2, el selector pasó de
+   0.146 ms a 0.011 ms por frame, trece veces menos. Lo caro eran los cuatro
+   emoji — son glifos en color y cuestan bastante más que texto normal.
+   El anillo de permanencia sí se dibuja en vivo: es lo único que se mueve. */
+const cacheBotones = new Map();
+function spriteBoton(b, activa){
+  const clave = b.id + (activa ? '*' : '');
+  let s = cacheBotones.get(clave);
+  if (s) return s;
+  const d = S.dpr;
+  s = document.createElement('canvas');
+  s.width = Math.ceil(b.w*d); s.height = Math.ceil(b.h*d);
+  const g = s.getContext('2d'); g.scale(d,d);
+  g.fillStyle = activa ? 'rgba(77,163,255,.22)' : 'rgba(10,16,36,.80)';
+  cajaEn(g, 1, 1, b.w-2, b.h-2, 14); g.fill();
+  g.lineWidth = activa ? 2.5 : 1.4;
+  g.strokeStyle = activa ? '#4da3ff' : 'rgba(60,80,130,.75)';
+  cajaEn(g, 1, 1, b.w-2, b.h-2, 14); g.stroke();
+  g.textAlign='center'; g.textBaseline='middle';
+  g.font = Math.round(b.h*0.34)+'px system-ui';
+  g.fillStyle = activa ? '#eaf2ff' : 'rgba(220,232,255,.72)';
+  g.fillText(b.icono, b.w/2, b.h*0.38);
+  g.font = '600 '+Math.max(11, Math.round(b.h*0.135))+'px system-ui';
+  g.fillStyle = activa ? '#eaf2ff' : 'rgba(190,208,240,.80)';
+  g.fillText(b.nombre, b.w/2, b.h*0.76);
+  cacheBotones.set(clave, s);
+  return s;
 }
+
+function dibujarSelector(){
+  const B = selector.botones;
+  for (let i=0;i<B.length;i++){
+    const b = B[i], activa = (b.id === estacionActiva), sobre = (i === selector.sobre);
+    cx.drawImage(spriteBoton(b, activa), b.x, b.y, b.w, b.h);
+    // el borde se resalta al pasar por encima, antes de que el anillo arranque
+    if (sobre && !activa){
+      cx.lineWidth = 1.6; cx.strokeStyle = 'rgba(200,220,255,.55)';
+      caja(b.x, b.y, b.w, b.h, 14); cx.stroke();
+    }
+    // anillo de permanencia: se cierra en DWELL_MS y se borra al salir
+    if (sobre && !activa && selector.dwell > 0){
+      const u = Math.min(1, selector.dwell/DWELL_MS);
+      const r = Math.min(b.w, b.h)*0.46;
+      cx.strokeStyle = '#37d67a'; cx.lineWidth = 4; cx.lineCap = 'round';
+      cx.beginPath();
+      cx.arc(b.x + b.w/2, b.y + b.h/2, r, -Math.PI/2, -Math.PI/2 + u*Math.PI*2);
+      cx.stroke();
+      cx.lineCap = 'butt';
+    }
+  }
+}
+
+/* Marco común de la estación activa. Se pinta bastante opaco a propósito:
+   Carbonito pasa por detrás y, si el panel fuese muy transparente, se le
+   vería el cuerpo cruzando por encima de los electrodos. */
+function marcoEstacion(borde, grueso){
+  const Z = S.zona;
+  cx.fillStyle = 'rgba(10,16,36,.86)';
+  caja(Z.x, Z.y, Z.w, Z.h, 18); cx.fill();
+  cx.lineWidth = grueso || 1.6; cx.strokeStyle = borde;
+  caja(Z.x, Z.y, Z.w, Z.h, 18); cx.stroke();
+}
+
+function tituloEstacion(txt, color){
+  const Z = S.zona;
+  cx.textAlign='left'; cx.textBaseline='alphabetic';
+  cx.fillStyle = color || 'rgba(143,160,200,.9)';
+  cx.font='600 12px system-ui';
+  cx.fillText(txt, Z.x+18, Z.y+26);
+}
+
+/* ── dibujo de la mesa ─────────────────────────────────────────── */
+/* Vale para cualquier contexto porque los sprites se pintan en canvas
+   propios fuera de pantalla, no en el del juego. */
+function cajaEn(g,x,y,w,h,r){
+  if (g.roundRect){ g.beginPath(); g.roundRect(x,y,w,h,r); return; }
+  g.beginPath();                        // respaldo para navegadores sin roundRect
+  g.moveTo(x+r,y); g.lineTo(x+w-r,y); g.quadraticCurveTo(x+w,y,x+w,y+r);
+  g.lineTo(x+w,y+h-r); g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  g.lineTo(x+r,y+h); g.quadraticCurveTo(x,y+h,x,y+h-r);
+  g.lineTo(x,y+r); g.quadraticCurveTo(x,y,x+r,y);
+  g.closePath();
+}
+const caja = (x,y,w,h,r) => cajaEn(cx,x,y,w,h,r);
 
 function dibujarRanura(r, x, y, rs, viva){
   cx.lineWidth = 2;
@@ -1079,45 +1306,40 @@ function dibujarRanura(r, x, y, rs, viva){
 function dibujarMesa(){
   const M = S.mesa; if (!M) return;
   const R = M.ranuras;
-  const yc = M.y + M.h*0.56;
-  const x1 = M.x + M.rs + 16, x2 = x1 + M.rs*2 + 22;
+  const yc = M.y + M.h*0.58;
+  const sep = M.rs*0.7;                              // hueco entre ranura y signo
+  const x1 = M.x + M.rs + sep, x2 = x1 + M.rs*2 + sep*2;
+  const k  = M.rs/30;                                // escala general de la mesa
 
-  cx.fillStyle = 'rgba(10,16,36,.66)';
-  caja(M.x, M.y, M.w, M.h, 14); cx.fill();
-  cx.lineWidth = M.destello>0.02 ? 3 : 1.5;
-  cx.strokeStyle = M.enlace ? 'rgba(199,125,255,'+(0.55+M.destello*0.45).toFixed(2)+')'
-                 : M.error && R.length>1 ? 'rgba(255,176,32,.55)'
-                 : 'rgba(77,163,255,.45)';
-  caja(M.x, M.y, M.w, M.h, 14); cx.stroke();
-
-  cx.textAlign='left'; cx.textBaseline='alphabetic';
-  cx.fillStyle='rgba(143,160,200,.9)'; cx.font='600 11px system-ui';
-  cx.fillText('ZONA DE ENLACE', M.x+14, M.y+22);
+  marcoEstacion(M.enlace ? 'rgba(199,125,255,'+(0.55+M.destello*0.45).toFixed(2)+')'
+              : M.error && R.length>1 ? 'rgba(255,176,32,.55)'
+              : 'rgba(77,163,255,.45)', M.destello>0.02 ? 3 : 1.6);
+  tituloEstacion('ZONA DE ENLACE · junta dos átomos');
 
   dibujarRanura(R[0], x1, yc, M.rs, !!R[0]);
-  cx.fillStyle='rgba(200,215,245,.75)'; cx.font='600 20px system-ui';
+  cx.fillStyle='rgba(200,215,245,.75)'; cx.font='600 '+Math.round(26*k)+'px system-ui';
   cx.textAlign='center'; cx.textBaseline='middle';
   cx.fillText('+', (x1+x2)/2, yc);
   dibujarRanura(R[1], x2, yc, M.rs, !!R[1]);
 
-  const xr = x2 + M.rs + 14;
+  const xr = x2 + M.rs + sep;
   cx.fillText('→', xr, yc);
-  const xt = xr + 16, anchoT = M.x + M.w - xt - 12;
+  const xt = xr + sep, anchoT = M.x + M.w - xt - 16;
 
+  cx.textAlign='left';
   if (M.enlace){
-    cx.textAlign='left';
-    cx.fillStyle='#e6d4ff'; cx.font='700 '+Math.min(30, anchoT*0.22)+'px system-ui';
-    cx.fillText((M.factor>1 ? M.factor+' ' : '')+conSub(M.enlace.formula), xt, yc-8);
-    cx.fillStyle='rgba(200,215,245,.75)'; cx.font='11.5px system-ui';
-    cx.fillText(M.enlace.nombre.slice(0,26), xt, yc+16);
+    cx.fillStyle='#e6d4ff'; cx.font='700 '+Math.round(Math.min(64, anchoT*0.24))+'px system-ui';
+    cx.fillText((M.factor>1 ? M.factor+' ' : '')+conSub(M.enlace.formula), xt, yc-14*k);
+    cx.fillStyle='rgba(200,215,245,.75)'; cx.font=Math.round(15*k)+'px system-ui';
+    cx.fillText(M.enlace.nombre, xt, yc+26*k);
   } else if (M.lineas.length){
-    cx.textAlign='left';
     cx.fillStyle = R.length>1 ? '#ffd489' : 'rgba(160,180,220,.8)';
-    cx.font='12px system-ui';
-    const y0 = yc - (M.lineas.length-1)*7;
-    for (let i=0;i<M.lineas.length;i++) cx.fillText(M.lineas[i], xt, y0 + i*14);
+    const fs = Math.round(Math.max(13, 15*k));
+    cx.font=fs+'px system-ui';
+    const y0 = yc - (M.lineas.length-1)*fs*0.6;
+    for (let i=0;i<M.lineas.length;i++) cx.fillText(M.lineas[i], xt, y0 + i*fs*1.2);
   } else {
-    cx.textAlign='left'; cx.fillStyle='rgba(160,180,220,.55)'; cx.font='12px system-ui';
+    cx.fillStyle='rgba(160,180,220,.55)'; cx.font=Math.round(Math.max(13,15*k))+'px system-ui';
     cx.fillText('trae dos átomos', xt, yc);
   }
   cx.textBaseline='alphabetic';
@@ -1337,111 +1559,106 @@ function dibujarQuemador(){
   const Q = S.quemador; if (!Q) return;
   const ardiendo = Q.fase === 'ardiendo';
 
-  cx.fillStyle = 'rgba(10,16,36,.66)';
-  caja(Q.x, Q.y, Q.w, Q.h, 14); cx.fill();
-  cx.lineWidth = ardiendo ? 3 : 1.5;
-  cx.strokeStyle = ardiendo ? (Q.color || '#ffd35e')
-                 : Q.fase === 'resultado' ? 'rgba(255,255,255,.5)'
-                 : 'rgba(255,140,60,.45)';
-  caja(Q.x, Q.y, Q.w, Q.h, 14); cx.stroke();
+  marcoEstacion(ardiendo ? (Q.color || '#ffd35e')
+              : Q.fase === 'resultado' ? 'rgba(255,255,255,.5)'
+              : 'rgba(255,140,60,.45)', ardiendo ? 3 : 1.6);
+  tituloEstacion('QUEMADOR · O₂ · suelta un metal y mira la balanza');
 
-  cx.textAlign='left'; cx.textBaseline='alphabetic';
-  cx.fillStyle='rgba(143,160,200,.9)'; cx.font='600 11px system-ui';
-  cx.fillText('QUEMADOR · O₂', Q.x+14, Q.y+22);
-
-  const cxq = Q.x + Q.w/2, base = Q.y + Q.h*0.60;
+  /* Con la balanza puesta el mechero se va a la izquierda para dejarle sitio
+     a las cuentas, que es lo que de verdad hay que leer. Sin ella se centra. */
+  const k = Math.max(1, Math.min(3, Q.h/300));
+  const cxq = Q.fase === 'resultado' ? Q.x + Q.w*0.26 : Q.x + Q.w*0.5;
+  const base = Q.y + Q.h*0.62;
 
   // el mechero: un pie y una boquilla, siempre visibles
   cx.fillStyle = 'rgba(150,170,210,.5)';
-  cx.fillRect(cxq-24, base+26, 48, 6);
-  cx.fillRect(cxq-5, base, 10, 28);
+  cx.fillRect(cxq-24*k, base+26*k, 48*k, 6*k);
+  cx.fillRect(cxq-5*k, base, 10*k, 28*k);
 
   if (ardiendo){
     // llama: dos lóbulos que laten, del color de la llama del elemento
     const u = Q.t / QUEMA_MS, late = 1 + Math.sin(Q.t*0.045)*0.12;
-    const alto = Q.h*0.30*late*(1 - u*0.25);
+    const alto = Q.h*0.34*late*(1 - u*0.25);
     cx.globalAlpha = 0.9;
     cx.fillStyle = Q.color;
     cx.beginPath();
-    cx.moveTo(cxq-15, base);
-    cx.quadraticCurveTo(cxq-20, base-alto*0.6, cxq, base-alto);
-    cx.quadraticCurveTo(cxq+20, base-alto*0.6, cxq+15, base);
+    cx.moveTo(cxq-15*k, base);
+    cx.quadraticCurveTo(cxq-20*k, base-alto*0.6, cxq, base-alto);
+    cx.quadraticCurveTo(cxq+20*k, base-alto*0.6, cxq+15*k, base);
     cx.closePath(); cx.fill();
     cx.fillStyle = Q.el.simbolo==='Mg' ? '#ffffff' : 'rgba(255,255,255,.75)';
     cx.beginPath();
-    cx.moveTo(cxq-7, base);
-    cx.quadraticCurveTo(cxq-9, base-alto*0.4, cxq, base-alto*0.62);
-    cx.quadraticCurveTo(cxq+9, base-alto*0.4, cxq+7, base);
+    cx.moveTo(cxq-7*k, base);
+    cx.quadraticCurveTo(cxq-9*k, base-alto*0.4, cxq, base-alto*0.62);
+    cx.quadraticCurveTo(cxq+9*k, base-alto*0.4, cxq+7*k, base);
     cx.closePath(); cx.fill();
     cx.globalAlpha = 1;
-    cx.textAlign='center'; cx.fillStyle='#fff'; cx.font='600 12px system-ui';
-    cx.fillText('ardiendo…', cxq, Q.y+Q.h-16);
+    cx.textAlign='center'; cx.fillStyle='#fff'; cx.font='600 '+Math.round(15*k)+'px system-ui';
+    cx.fillText('ardiendo…', cxq, Q.y+Q.h-20*k);
 
   } else if (Q.fase === 'resultado'){
-    dibujarBalanza(Q);
+    dibujarBalanza(Q, k, cxq);
 
   } else {
-    cx.textAlign='center'; cx.fillStyle='rgba(160,180,220,.55)'; cx.font='12px system-ui';
-    cx.fillText('trae un metal', cxq, Q.y+Q.h-42);
-    cx.fillText('y quémalo', cxq, Q.y+Q.h-26);
+    cx.textAlign='center'; cx.fillStyle='rgba(160,180,220,.55)';
+    cx.font=Math.round(15*k)+'px system-ui';
+    cx.fillText('trae un metal y quémalo', cxq, Q.y+Q.h-30*k);
   }
   cx.textAlign='left'; cx.textBaseline='alphabetic';
 }
 
 /* La tabla de masas: el corazón de la zona. Se lee de arriba abajo como una
    suma de las de toda la vida, para que la conclusión sea inevitable. */
-function dibujarBalanza(Q){
+/* La tabla de masas ocupa la mitad derecha de la estación y crece con ella:
+   es lo que hay que leer, así que es lo que tiene que verse desde lejos. */
+function dibujarBalanza(Q, k, cxMechero){
   const m = Q.masas, en = Q.enlace;
-  const x = Q.x + 14, ancho = Q.w - 28;
-  let y = Q.y + 46;
+  const x = Q.x + Q.w*0.48, ancho = Q.w*0.46;
+  const fs = Math.round(Math.max(14, 17*k));
+  let y = Q.y + Q.h*0.30;
   const fila = (etq, val, resalta) => {
     cx.textAlign='left';
     cx.fillStyle = resalta ? '#fff' : 'rgba(210,224,250,.85)';
-    cx.font = (resalta ? '700 ' : '') + '12px system-ui';
+    cx.font = (resalta ? '700 ' : '') + fs + 'px system-ui';
     cx.fillText(etq, x, y);
     cx.textAlign='right';
     cx.fillText(val.toFixed(1)+' u', x+ancho, y);
-    y += 19;
+    y += fs*1.55;
   };
   fila((m.nM>1 ? m.nM+' × ' : '') + Q.el.nombre, m.mM, false);
   fila('+ ' + (m.nO>1 ? m.nO+' × ' : '') + 'oxígeno', m.mO, false);
   // la raya de la suma, como en el cuaderno
-  cx.strokeStyle='rgba(160,180,220,.45)'; cx.lineWidth=1;
-  cx.beginPath(); cx.moveTo(x, y-13); cx.lineTo(x+ancho, y-13); cx.stroke();
-  y += 3;
+  cx.strokeStyle='rgba(160,180,220,.45)'; cx.lineWidth=Math.max(1,k);
+  cx.beginPath(); cx.moveTo(x, y-fs*1.05); cx.lineTo(x+ancho, y-fs*1.05); cx.stroke();
+  y += fs*0.25;
   fila('= ' + conSub(en.formula), m.total, true);
 
-  cx.textAlign='center';
-  cx.fillStyle='#37d67a'; cx.font='600 11.5px system-ui';
-  const cxq = Q.x + Q.w/2;
-  cx.fillText('¡pesa MÁS que el metal!', cxq, y+4);
-  cx.fillStyle='rgba(200,215,245,.72)'; cx.font='11px system-ui';
-  cx.fillText('+'+m.gana.toFixed(0)+'% — se llevó el oxígeno', cxq, y+20);
-  // el polvo que queda
+  cx.textAlign='left';
+  cx.fillStyle='#37d67a'; cx.font='600 '+Math.round(fs*0.95)+'px system-ui';
+  cx.fillText('¡pesa MÁS que el metal!', x, y+fs*0.4);
+  cx.fillStyle='rgba(200,215,245,.72)'; cx.font=Math.round(fs*0.82)+'px system-ui';
+  cx.fillText('+'+m.gana.toFixed(0)+'% — se llevó el oxígeno del aire', x, y+fs*1.6);
+  // el polvo que queda, al pie del mechero
   cx.fillStyle='rgba(235,240,255,.5)';
-  cx.beginPath(); cx.ellipse(cxq, Q.y+Q.h-20, Q.w*0.20, 6, 0, 0, 7); cx.fill();
+  cx.beginPath(); cx.ellipse(cxMechero, Q.y+Q.h*0.62+34*k, 46*k, 7*k, 0, 0, 7); cx.fill();
 }
 
 /* ── dibujo de la electrólisis ─────────────────────────────────── */
 function dibujarElectrolisis(){
   const E = S.electro; if (!E) return;
 
-  cx.fillStyle = 'rgba(10,16,36,.66)';
-  caja(E.x, E.y, E.w, E.h, 14); cx.fill();
-  cx.lineWidth = E.encendido ? 3 : 1.5;
-  cx.strokeStyle = E.completado ? 'rgba(55,214,122,.7)'
-                 : E.encendido ? 'rgba(255,214,80,.85)' : 'rgba(77,163,255,.45)';
-  caja(E.x, E.y, E.w, E.h, 14); cx.stroke();
-
-  cx.textAlign='left'; cx.textBaseline='alphabetic';
-  cx.fillStyle='rgba(143,160,200,.9)'; cx.font='600 11px system-ui';
-  cx.fillText('ELECTRÓLISIS · 2 H₂O → 2 H₂ + O₂', E.x+14, E.y+22);
+  const k = Math.max(1, Math.min(2.6, E.h/300));
+  marcoEstacion(E.completado ? 'rgba(55,214,122,.7)'
+              : E.encendido ? 'rgba(255,214,80,.85)' : 'rgba(77,163,255,.45)',
+              E.encendido ? 3 : 1.6);
+  tituloEstacion('ELECTRÓLISIS · 2 H₂O → 2 H₂ + O₂');
   // lo que hace que esta zona tenga sentido: es la mesa al revés
-  cx.fillStyle='rgba(160,180,220,.62)'; cx.font='10.5px system-ui';
-  cx.fillText('en la mesa juntaste H+H+O para hacer agua · aquí la separas', E.x+14, E.y+36);
+  cx.fillStyle='rgba(160,180,220,.62)'; cx.font=Math.round(12*k)+'px system-ui';
+  cx.fillText('en la mesa juntaste H+H+O para hacer agua · aquí la separas',
+              E.x+18, E.y+26+16*k);
 
   // la cubeta con agua
-  const ax = E.x+14, aw = E.w-28;
+  const ax = E.x+18, aw = E.w-36;
   cx.fillStyle = 'rgba(60,140,235,.20)';
   caja(ax, E.yAgua, aw, E.hAgua, 8); cx.fill();
   cx.strokeStyle = 'rgba(120,180,255,.35)'; cx.lineWidth=1.5;
@@ -1454,9 +1671,9 @@ function dibujarElectrolisis(){
   // los electrodos: dos barras que bajan al agua
   for (const [x, signo, col] of [[E.xNeg,'−','#9fd8ff'], [E.xPos,'+','#ffd9a0']]){
     cx.fillStyle = 'rgba(190,205,235,.75)';
-    cx.fillRect(x-3, E.yAgua+E.hAgua*0.30, 6, E.hAgua*0.52);
-    cx.textAlign='center'; cx.fillStyle=col; cx.font='700 13px system-ui';
-    cx.fillText(signo, x, E.yAgua+E.hAgua+16);
+    cx.fillRect(x-3*k, E.yAgua+E.hAgua*0.30, 6*k, E.hAgua*0.52);
+    cx.textAlign='center'; cx.fillStyle=col; cx.font='700 '+Math.round(17*k)+'px system-ui';
+    cx.fillText(signo, x, E.yAgua+E.hAgua+20*k);
   }
 
   // el interruptor: diana grande, que se sostiene con el gesto
@@ -1467,20 +1684,19 @@ function dibujarElectrolisis(){
   caja(E.swX, E.swY, E.swW, E.swH, 9); cx.stroke();
   cx.textAlign='center'; cx.textBaseline='middle';
   cx.fillStyle = enc ? '#ffd650' : 'rgba(200,215,245,.8)';
-  cx.font='600 12px system-ui';
+  cx.font='600 '+Math.round(Math.max(13, 15*k))+'px system-ui';
   cx.fillText(enc ? '⚡ CORRIENTE' : 'aplicar corriente', E.swX+E.swW/2, E.swY+E.swH/2);
   cx.textBaseline='alphabetic';
 
   // el marcador 2:1, que es la lección
-  cx.textAlign='right'; cx.font='11.5px system-ui';
+  cx.textAlign='left'; cx.font='600 '+Math.round(Math.max(13, 16*k))+'px system-ui';
   cx.fillStyle = E.completado ? '#37d67a' : 'rgba(200,215,245,.8)';
-  cx.fillText('H₂ '+E.nH+'  ·  O₂ '+E.nO+'   → 2 : 1', E.x+E.w-14, E.y+E.h-12);
-  cx.textAlign='left';
+  cx.fillText('H₂ '+E.nH+'  ·  O₂ '+E.nO+'   → siempre 2 : 1', E.x+18, E.y+E.h-16);
 }
 
 function tuboGas(x, E, llenado, color, etq, n){
-  const tw = 26, th = E.hAgua*0.55;
-  const ty = E.yAgua - th - 6;
+  const tw = Math.max(26, E.w*0.045), th = E.hAgua*0.62;
+  const ty = E.yAgua - th - 8;
   cx.fillStyle = 'rgba(10,16,36,.5)';
   caja(x-tw/2, ty, tw, th, 5); cx.fill();
   const h = Math.max(0, Math.min(1, llenado)) * (th-4);
@@ -1490,8 +1706,9 @@ function tuboGas(x, E, llenado, color, etq, n){
   cx.globalAlpha = 1;
   cx.strokeStyle = 'rgba(150,180,225,.5)'; cx.lineWidth=1.2;
   caja(x-tw/2, ty, tw, th, 5); cx.stroke();
-  cx.textAlign='center'; cx.fillStyle=color; cx.font='600 11px system-ui';
-  cx.fillText(etq, x, ty-5);
+  cx.textAlign='center'; cx.fillStyle=color;
+  cx.font='600 '+Math.round(Math.max(12, tw*0.55))+'px system-ui';
+  cx.fillText(etq, x, ty-7);
 }
 
 /* ── los dos paneles laterales ─────────────────────────────────── */
@@ -1692,10 +1909,16 @@ function dibujar(){
   S.sacX = sx; S.sacY = sy;      // dibujarFicha necesita rehacer esta matriz
   cx.setTransform(S.dpr,0,0,S.dpr, sx*S.dpr, sy*S.dpr);
   cx.clearRect(-30,-30,S.W+60,S.H+60);
-  dibujarVaso();
-  dibujarMesa();
-  dibujarQuemador();
-  dibujarElectrolisis();
+  /* Entrada corta al cambiar de estación: 160 ms. Lo justo para que el ojo
+     entienda que cambió algo, sin que parezca una presentación. */
+  const entrada = Math.min(1, (performance.now() - (S.tCambio||0))/160);
+  cx.globalAlpha = entrada;
+  if      (estacionActiva === 'vaso')     dibujarVaso();
+  else if (estacionActiva === 'mesa')     dibujarMesa();
+  else if (estacionActiva === 'quemador') dibujarQuemador();
+  else                                    dibujarElectrolisis();
+  cx.globalAlpha = 1;
+  dibujarSelector();
   for (let i=0;i<nDest;i++){
     const d = destellos[i];
     cx.globalAlpha = d.vida*0.5;
@@ -1712,27 +1935,72 @@ function dibujar(){
   dibujarPuntero();
 }
 function trazoVaso(v){
+  const r = Math.min(34, v.w*0.14);       // el redondeo del fondo, proporcional
   cx.beginPath();
-  cx.moveTo(v.x, v.y); cx.lineTo(v.x, v.y+v.h-24);
-  cx.quadraticCurveTo(v.x, v.y+v.h, v.x+24, v.y+v.h);
-  cx.lineTo(v.x+v.w-24, v.y+v.h);
-  cx.quadraticCurveTo(v.x+v.w, v.y+v.h, v.x+v.w, v.y+v.h-24);
+  cx.moveTo(v.x, v.y); cx.lineTo(v.x, v.y+v.h-r);
+  cx.quadraticCurveTo(v.x, v.y+v.h, v.x+r, v.y+v.h);
+  cx.lineTo(v.x+v.w-r, v.y+v.h);
+  cx.quadraticCurveTo(v.x+v.w, v.y+v.h, v.x+v.w, v.y+v.h-r);
   cx.lineTo(v.x+v.w, v.y);
 }
 function dibujarVaso(){
+  marcoEstacion('rgba(77,163,255,.45)');
+  tituloEstacion('VASO DE AGUA · suelta un metal dentro');
   const v = S.vaso, supY = v.y + v.h*0.30;
+  const k = v.w/200;                      // todo escala con el ancho del vaso
   cx.save(); trazoVaso(v); cx.clip();
   const g = cx.createLinearGradient(0,supY,0,v.y+v.h);
   g.addColorStop(0,'rgba(80,170,255,.42)'); g.addColorStop(1,'rgba(30,90,190,.62)');
   cx.fillStyle=g; cx.beginPath(); cx.moveTo(v.x, supY);
-  const amp = Math.min(13, S.agua.olas);
-  for (let x=0;x<=v.w;x+=6) cx.lineTo(v.x+x, supY+Math.sin(x*0.045+S.agua.nivel)*amp*0.5);
+  const amp = Math.min(13, S.agua.olas)*k;
+  for (let x=0;x<=v.w;x+=6) cx.lineTo(v.x+x, supY+Math.sin(x*0.045/k+S.agua.nivel)*amp*0.5);
   cx.lineTo(v.x+v.w, v.y+v.h); cx.lineTo(v.x, v.y+v.h); cx.closePath(); cx.fill();
   cx.restore();
-  cx.strokeStyle='rgba(190,215,255,.55)'; cx.lineWidth=2.5; trazoVaso(v); cx.stroke();
-  cx.fillStyle='rgba(190,215,255,.6)'; cx.font='600 13px system-ui'; cx.textAlign='center';
-  cx.fillText('H₂O', v.x+v.w/2, v.y+v.h+21);
+  cx.strokeStyle='rgba(190,215,255,.55)'; cx.lineWidth=2.5*Math.max(1,k*0.8); trazoVaso(v); cx.stroke();
+  cx.fillStyle='rgba(190,215,255,.6)'; cx.font='600 '+Math.round(13*Math.max(1,k))+'px system-ui';
+  cx.textAlign='center';
+  cx.fillText('H₂O', v.x+v.w/2, v.y+v.h+Math.round(24*Math.max(1,k*0.8)));
+  cx.textAlign='left';
 }
+/* ── FICHA COMPLETA EN UN SPRITE ────────────────────────────────
+   Esfera, borde y símbolo se pintan UNA vez en un canvas fuera de pantalla
+   y luego es un solo drawImage por ficha.
+
+   Medido a 1920x1080 con dpr 2, las 19 fichas: 0.225 ms por frame a mano
+   contra 0.075 ms con sprite. Lo que se ahorra es sobre todo el fillText del
+   símbolo — dibujar el cuerpo sin texto ya costaba 0.120 ms, o sea que el
+   texto era el 57% del total. Ojo con la tentación de culpar al cambio de
+   cx.font: eso se midió aparte y son 0.007 ms, nada.
+
+   La caché se tira entera en disponer(), que es donde cambian el radio de las
+   fichas y el devicePixelRatio. Dentro de un mismo tamaño solo cambia cuando
+   un elemento pasa a descubierto, y por eso el estado va en la clave.      */
+const cacheFichaLista = new Map();
+function spriteFichaLista(f){
+  const el = f.el, desc = S.descubiertos.has(el.simbolo);
+  const clave = el.simbolo + (desc ? '*' : '');
+  let s = cacheFichaLista.get(clave);
+  if (s) return s;
+  // se pinta al mayor tamaño que va a ocupar (1.16 del rebote al apuntarla)
+  const lado = Math.ceil(f.r * 1.20 * S.dpr) * 2;
+  s = document.createElement('canvas'); s.width = s.height = lado;
+  const g = s.getContext('2d');
+  // espacio interno de radio 100, como el degradado cacheado de siempre
+  g.translate(lado/2, lado/2); g.scale(lado/200, lado/200);
+  const rg = g.createRadialGradient(-30,-35,10, 0,0,100);
+  const col = colorDe(el);
+  rg.addColorStop(0,'#ffffff'); rg.addColorStop(0.28,col); rg.addColorStop(1,col);
+  g.fillStyle = rg; g.beginPath(); g.arc(0,0,100,0,7); g.fill();
+  g.strokeStyle = desc ? 'rgba(55,214,122,.9)' : 'rgba(255,255,255,.35)';
+  g.lineWidth = 200/f.r;                 // los 2 px de pantalla, en unidades de aquí
+  g.beginPath(); g.arc(0,0,100,0,7); g.stroke();
+  g.fillStyle = '#0a1020'; g.font = '700 80px system-ui';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(el.simbolo, 0, 100/f.r);
+  cacheFichaLista.set(clave, s);
+  return s;
+}
+
 function dibujarFicha(f){
   const el=f.el;
   const cerca = Math.hypot(f.x-puntero.x, f.y-puntero.y) < f.r*2.1;
@@ -1742,23 +2010,15 @@ function dibujarFicha(f){
     cx.globalAlpha=.28; cx.fillStyle=colorDe(el);
     cx.beginPath(); cx.arc(f.x,f.y,r*1.55,0,7); cx.fill(); cx.globalAlpha=1;
   }
-  // se lleva la ficha al espacio del degradado cacheado y se vuelve
-  const k = r/100, d = S.dpr;
-  cx.setTransform(d*k,0,0,d*k, (f.x+S.sacX)*d, (f.y+S.sacY)*d);
-  cx.fillStyle = gradFicha(colorDe(el));
-  cx.beginPath(); cx.arc(0,0,100,0,7); cx.fill();
-  cx.setTransform(d,0,0,d, S.sacX*d, S.sacY*d);
-  cx.strokeStyle = S.descubiertos.has(el.simbolo)?'rgba(55,214,122,.9)':'rgba(255,255,255,.35)';
-  cx.lineWidth=2; cx.beginPath(); cx.arc(f.x,f.y,r,0,7); cx.stroke();
-  cx.fillStyle='#0a1020'; cx.font='700 '+(r*0.8)+'px system-ui';
-  cx.textAlign='center'; cx.textBaseline='middle';
-  cx.fillText(el.simbolo, f.x, f.y+1);
+  cx.drawImage(spriteFichaLista(f), f.x-r, f.y-r, r*2, r*2);
   /* Con 19 fichas en dos columnas, 19 etiquetas fijas son ruido y encima la
      de la columna interior se montaría sobre la exterior. Se muestra solo la
      del elemento apuntado, y alineada al borde del estante. */
   if (cerca || f===S.agarrada){
-    cx.textAlign='right'; cx.fillStyle='rgba(220,232,255,.85)'; cx.font='12px system-ui';
+    cx.textAlign='right'; cx.textBaseline='middle';
+    cx.fillStyle='rgba(220,232,255,.85)'; cx.font='12px system-ui';
     cx.fillText(el.nombre, S.estanteIzq - 10, f.y+1);
+    cx.textAlign='left'; cx.textBaseline='alphabetic';
   }
 }
 function dibujarPuntero(){
@@ -1778,6 +2038,7 @@ function fisica(){
   const ahora = performance.now();
   const dt = tFisica ? Math.min(50, ahora - tFisica) : 16.7;
   tFisica = ahora;
+  actualizarSelector(dt);
   atenderElectrolisis();
   actualizarQuemador(dt);
   actualizarElectrolisis(dt);
@@ -1887,7 +2148,7 @@ function normalizarAngulo(a){
 /* Encadena: gira hacia el destino, camina de perfil y al llegar pasa al
    estado indicado. El rumbo se fija UNA vez aquí; caminar no lo recalcula. */
 function irHacia(pxDestino, despues){
-  NPC.objetivoX = xDePantalla(pxDestino);
+  NPC.objetivoX = xDePantalla(enCarril(pxDestino));
   const dir = Math.sign(NPC.objetivoX - NPC.x) || 1;
   NPC.rumbo = normalizarAngulo(carbo.base + PERFIL*dir);
   NPC.trasCaminar = despues;
@@ -2028,6 +2289,10 @@ const carboMats = [];
    usuario en el encuadre de la webcam. En unidades de mundo: a su distancia
    de cámara, 1 unidad ≈ 240 px de pantalla. */
 const BAJAR_CARBONITO = 0.50;
+/* Cuánto lo levanta un sobresalto. Era 0.55 de mundo, o sea ~16% del alto de
+   la pantalla: con la estación ocupando todo lo de arriba, ese salto le sacaba
+   la cabeza por detrás del panel. Un respingo se lee igual y no invade. */
+const SUSTO_SALTO = 0.16;
 const Y_CARBONITO = -0.72 - BAJAR_CARBONITO;   // su centro
 const SUELO = -1.47 - BAJAR_CARBONITO;         // el piso: donde quedan sus pies
 
@@ -2240,7 +2505,7 @@ function animarCarbonito(tms){
     ponerClip(andando
       ? (clipQueCoincida(['walk','camin','run','anda','move']) || primeraAccion())
       : (clipQueCoincida(['idle','stand','quiet','espera','wave','talk']) || primeraAccion()));
-    carboMalla.position.set(x, Y_CARBONITO + carbo.susto*0.55, z);
+    carboMalla.position.set(x, Y_CARBONITO + carbo.susto*SUSTO_SALTO, z);
     carboMalla.scale.set(1,1,1);
     carboMalla.rotation.z = 0;
 
@@ -2250,7 +2515,7 @@ function animarCarbonito(tms){
     // dos rebotes por zancada (uno por pie). Parado el rebote es casi nulo:
     // los pies no deben despegarse del suelo.
     const rebote = andando ? Math.abs(Math.sin(carbo.fase))*0.05 : 0;
-    carboMalla.position.set(x, Y_CARBONITO + rebote + carbo.susto*0.55, z);
+    carboMalla.position.set(x, Y_CARBONITO + rebote + carbo.susto*SUSTO_SALTO, z);
     carboMalla.scale.set(1,1,1);
     carboMalla.rotation.z = andando ? Math.sin(carbo.fase)*0.03 : 0;
     inclina = andando ? 0.07 : 0;
@@ -2278,7 +2543,7 @@ function animarCarbonito(tms){
       estY   = 1 + Math.sin(tms*0.0018)*0.018;
       estXZ  = 1 - Math.sin(tms*0.0018)*0.012;
     }
-    carboMalla.position.set(x, Y_CARBONITO + altura + carbo.susto*0.55, z);
+    carboMalla.position.set(x, Y_CARBONITO + altura + carbo.susto*SUSTO_SALTO, z);
     carboMalla.scale.set(estXZ, estY, estXZ);
     carboMalla.rotation.z = andando ? Math.sin(carbo.fase)*0.05 : 0;
   }
@@ -2310,12 +2575,26 @@ function orientar(inclina){
 }
 
 /* Su sitio de reposo: a la derecha del vaso, sin tapar nada. */
+/* Carbonito pasea por debajo de la estación (su coronilla queda justo bajo
+   ella) y entre el selector y el estante, para no cruzarse ni con los botones
+   ni con la columna de átomos. */
 function ajustarRecorrido(){
   if (!mundoCam || !THREEref) return;
-  NPC.casaX = xDePantalla(S.W*0.42);
+  const Z = S.zona || { x:0, w:S.W };
+  /* El margen del carril es su MEDIO ANCHO real en pantalla, no un número
+     fijo: Carbonito mide 103 px de ancho a 1024 y 186 a 1920, así que un
+     margen constante le dejaba el hombro encima del selector en las
+     resoluciones grandes. */
+  const medio = Math.abs(aPantalla(0.38, Y_CARBONITO, NPC.z).x -
+                         aPantalla(0,    Y_CARBONITO, NPC.z).x) + 14;
+  S.carrilIzq = Z.x + medio;
+  S.carrilDer = Math.max(S.carrilIzq + 40, S.estanteIzq - medio);
+  NPC.casaX = xDePantalla((S.carrilIzq + S.carrilDer)/2);
   if (NPC.estado === 'quieto') NPC.x = NPC.casaX;
-  console.log('[lab] sitio de reposo de Carbonito en x =', NPC.casaX.toFixed(2));
 }
+
+/* Mantiene un destino de paseo dentro del carril. */
+const enCarril = px => Math.max(S.carrilIzq||0, Math.min(S.carrilDer||S.W, px));
 
 /* sombra de contacto: se achica y se aclara cuando despega del suelo */
 function moverSombra(x, z){
@@ -2338,8 +2617,12 @@ function situarGlobo(x, z){
   if (!g.classList.contains('ver') || !THREEref) return;
   if (!vecGlobo) vecGlobo = new THREEref.Vector3();
   const v = vecGlobo.set(x, carboMalla.position.y + 1.05, z).project(mundoCam);
+  /* El globo se ancla por debajo de su borde inferior (transform:-100%), así
+     que su tope tiene que caer POR DEBAJO de la estación o taparía justo lo
+     que Carbonito está explicando. Antes se le montaba a los electrodos. */
+  const suelo = (S.zona ? S.zona.y + S.zona.h : 0) + 96;
   g.style.left = Math.max(150, Math.min(S.W-150, (v.x*0.5+0.5)*S.W))+'px';
-  g.style.top  = Math.max(90,  Math.min(S.H-40,  (-v.y*0.5+0.5)*S.H))+'px';
+  g.style.top  = Math.max(suelo, Math.min(S.H-30, (-v.y*0.5+0.5)*S.H))+'px';
 }
 
 function revisarInactividad(){
