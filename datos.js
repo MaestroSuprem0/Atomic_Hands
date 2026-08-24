@@ -1,7 +1,4 @@
-/* Generado por herramientas/generar_datos.py desde datos-quimica-v2/.
-   NO EDITAR A MANO: los cambios se pierden al regenerar.
-   Datos atómicos validados contra PubChem (NCBI/NLM).
-   19 elementos en el estante · 67 enlaces jugables. */
+
 const ELEMENTOS = [
  {
   "simbolo": "Li",
