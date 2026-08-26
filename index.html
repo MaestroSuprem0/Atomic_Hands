@@ -1011,8 +1011,7 @@ function tituloEstacion(txt, color){
 }
 
 /* ── dibujo de la mesa ─────────────────────────────────────────── */
-/* Vale para cualquier contexto porque los sprites se pintan en canvas
-   propios fuera de pantalla, no en el del juego. */
+
 function cajaEn(g,x,y,w,h,r){
   if (g.roundRect){ g.beginPath(); g.roundRect(x,y,w,h,r); return; }
   g.beginPath();                        // respaldo para navegadores sin roundRect
