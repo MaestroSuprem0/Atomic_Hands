@@ -1,4 +1,42 @@
+/* ══════════════════════════════════════════════════════════════════
+   RETOS — los objetivos del juego.
 
+   Este archivo se escribe A MANO y NO lo toca herramientas/generar_datos.py.
+   Aquí vive lo que no se puede derivar de PubChem: qué vale la pena pedirle
+   a un chico de 12-14, en qué orden, y para qué sirve cada compuesto en la
+   vida real. La química ya está validada en datos-quimica-v2/; esto es la
+   capa pedagógica encima.
+
+   Orden pensado como una clase: primero una transferencia de 1 electrón
+   (lo más simple que existe), luego compartir, luego proporciones distintas
+   de 1:1, y al final tres elementos a la vez.
+
+   Cada reto tiene:
+     tipo    dónde se resuelve:
+               'enlace'       armar el compuesto en la mesa
+               'agua'         soltar el elemento en el vaso
+               'quemar'       quemar el metal en el quemador
+               'electrolisis' separar el agua con corriente
+     meta    fórmula del compuesto, o símbolo del elemento en 'agua'/'quemar'
+     titulo  lo que se le pide, en lenguaje de chico
+     pista   aparece sola a los 30 s: empuja sin dar la respuesta
+     uso     para qué sirve de verdad. Es la recompensa: que se lleve un dato
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ══ COLORES DE LLAMA ═══════════════════════════════════════════════
+   El ensayo a la llama: cada metal arde de un color distinto, y el color
+   sale de los electrones al caer de vuelta a su capa después de que el
+   calor los subiera. Es contenido de verdad, no adorno, y es de las pocas
+   cosas de química que se ven a simple vista.
+
+   Va aquí y no en datos.js por dos razones: datos.js lo regenera un script
+   desde PubChem, y PubChem no publica colores de llama; y esto no se puede
+   derivar de la regla del octeto como los compuestos.
+
+   Fuente: colores estándar del ensayo a la llama (cualquier texto de
+   química general). El magnesio es el caso aparte: no da un color, da una
+   luz blanca cegadora — por eso se usaba en el flash de las cámaras
+   antiguas, como ya cuenta su propio datoCurioso.                        */
 const LLAMAS = {
   Li: '#ff3b4e',   // rojo carmín
   Na: '#ffcc22',   // amarillo intenso, el más conocido de todos
