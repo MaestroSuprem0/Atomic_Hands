@@ -1231,7 +1231,9 @@ function envolverMensaje(){
   M.lineas = [];
   if (!M.error) return;
   const ancho = M.w - M.rs*4 - 34;
-  cx.font = '12px system-ui';
+  // Misma fuente que en dibujarMesa: medir a 12 px y pintar a 15*k hacía que
+  // el texto se saliera del cuadro.
+  cx.font = Math.round(Math.max(13, 15*(M.rs/30)))+'px system-ui';
   let linea = '';
   for (const palabra of M.error.split(' ')){
     const prueba = linea ? linea+' '+palabra : palabra;
@@ -2198,6 +2200,7 @@ const carbo = {
    cámara; si nadie interactúa en 5 s, gira 90° a la izquierda, va hasta
    la columna, coge un reactivo, lo lleva al vaso, lo suelta (dispara la
    reacción de verdad) y vuelve a su sitio.                             */
+const MS_DEMO = 40000;   // cada cuánto se pone a demostrar solo
 const NPC = {
   estado:'quieto', tEstado:0, solto:false,
   z: -0.55,                 // camina siempre en este plano: sin profundidad
@@ -2298,7 +2301,7 @@ function actualizarNPC(dt){
     case 'quieto':
       NPC.rumbo = carbo.base;                       // de frente a la cámara
       if (NPC.tEstado < 60) soltarTodoNPC();        // red de seguridad al volver a reposo
-      if (!ocupado && NPC.tEstado > 5000){
+      if (!ocupado && NPC.tEstado > MS_DEMO){
         NPC.ficha = siguienteFicha();
         if (NPC.ficha){
           NPC.ficha.npc = true;                     // que el usuario no la agarre
@@ -2693,18 +2696,10 @@ function ajustarRecorrido(){
      fórmula: al alejarlo no solo encoge, también sube hacia el horizonte, y
      esas dos cosas juntas no se despejan a ojo. Reservar un porcentaje fijo
      del alto fallaba por unos pocos píxeles justo en 1280 y 1920.          */
-  const limiteY = (S.zona ? S.zona.y + S.zona.h : S.H*0.6) + 8;
-  const cabezaY = Y_CARBONITO + carbo.tamano*0.62;
-  const cabeEn = z => aPantalla(0, cabezaY, z).y >= limiteY;
-  let lejos = -12, cerca = -0.55;
-  if (cabeEn(cerca)) NPC.z = cerca;                  // ya cabe sin alejarlo
-  else {
-    for (let i=0;i<22;i++){
-      const m = (lejos+cerca)/2;
-      if (cabeEn(m)) lejos = m; else cerca = m;
-    }
-    NPC.z = lejos;
-  }
+  /* Antes se le alejaba hasta que la cabeza cupiera bajo la estación, y
+     acababa tan al fondo que no se le veía. Ahora se queda al frente y
+     vive en una esquina, fuera del camino. */
+  NPC.z = -0.55;
 
   const Z = S.zona || { x:0, w:S.W };
   /* El margen del carril es su MEDIO ANCHO real en pantalla, no un número
@@ -2714,7 +2709,7 @@ function ajustarRecorrido(){
                          aPantalla(0,    Y_CARBONITO, NPC.z).x) + 14;
   S.carrilIzq = Z.x + medio;
   S.carrilDer = Math.max(S.carrilIzq + 40, Z.x + Z.w - medio);
-  NPC.casaX = xDePantalla((S.carrilIzq + S.carrilDer)/2);
+  NPC.casaX = xDePantalla(S.carrilDer);   // esquina derecha, no en medio
   if (NPC.estado === 'quieto') NPC.x = NPC.casaX;
 }
 
