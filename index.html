@@ -1230,7 +1230,10 @@ function envolverMensaje(){
   const M = S.mesa; if (!M) return;
   M.lineas = [];
   if (!M.error) return;
-  const ancho = M.w - M.rs*4 - 34;
+  /* MISMO ancho que usa dibujarMesa: el texto arranca en xt, que queda a
+     7.5*rs del borde izquierdo (2 ranuras + flecha + 5 separaciones de 0.7).
+     Con 4*rs se envolvía como si hubiera ~120 px más de los que hay.      */
+  const ancho = M.w - M.rs*7.5 - 16;
   // Misma fuente que en dibujarMesa: medir a 12 px y pintar a 15*k hacía que
   // el texto se saliera del cuadro.
   cx.font = Math.round(Math.max(13, 15*(M.rs/30)))+'px system-ui';
