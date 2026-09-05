@@ -1758,9 +1758,11 @@ function dibujarElectrolisis(){
               E.encendido ? 3 : 1.6);
   tituloEstacion('ELECTRÓLISIS · 2 H₂O → 2 H₂ + O₂');
   // lo que hace que esta zona tenga sentido: es la mesa al revés
-  cx.fillStyle='rgba(160,180,220,.62)'; cx.font=Math.round(12*k)+'px system-ui';
-  cx.fillText('en la mesa juntaste H+H+O para hacer agua · aquí la separas',
-              E.x+18, E.y+26+16*k);
+  /* El hueco bajo el título es FIJO: con 16*k y k<1 quedaba menor que la
+     altura de línea y los dos textos se montaban. Y el texto se acorta para
+     que no pase por debajo de los tubos de recogida. */
+  cx.fillStyle='rgba(160,180,220,.62)'; cx.font=Math.round(Math.max(11, 12*k))+'px system-ui';
+  cx.fillText('es la mesa al revés · aquí el agua se separa', E.x+18, E.y+26+17);
 
   // la cubeta con agua
   const ax = E.x+18, aw = E.w-36;
