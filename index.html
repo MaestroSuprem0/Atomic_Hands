@@ -1758,11 +1758,18 @@ function dibujarElectrolisis(){
               E.encendido ? 3 : 1.6);
   tituloEstacion('ELECTRÓLISIS · 2 H₂O → 2 H₂ + O₂');
   // lo que hace que esta zona tenga sentido: es la mesa al revés
-  /* El hueco bajo el título es FIJO: con 16*k y k<1 quedaba menor que la
-     altura de línea y los dos textos se montaban. Y el texto se acorta para
-     que no pase por debajo de los tubos de recogida. */
-  cx.fillStyle='rgba(160,180,220,.62)'; cx.font=Math.round(Math.max(11, 12*k))+'px system-ui';
-  cx.fillText('es la mesa al revés · aquí el agua se separa', E.x+18, E.y+26+17);
+  /* En su propio cuadro, y el cuadro se MIDE a partir del texto: así no puede
+     desbordarse ni pisar los tubos por mucho que cambie la escala. El hueco
+     bajo el título es fijo (no *k) porque con k<1 los dos textos se montaban. */
+  cx.font='600 12px system-ui'; cx.textAlign='left';
+  const nota = 'es la mesa al revés';
+  const nw = cx.measureText(nota).width + 18, nh = 22;
+  const nx = E.x+18, ny = E.y+34;
+  cx.fillStyle='rgba(77,163,255,.12)';   caja(nx,ny,nw,nh,7); cx.fill();
+  cx.strokeStyle='rgba(77,163,255,.35)'; cx.lineWidth=1; caja(nx,ny,nw,nh,7); cx.stroke();
+  cx.fillStyle='rgba(185,208,245,.92)'; cx.textBaseline='middle';
+  cx.fillText(nota, nx+9, ny+nh/2);
+  cx.textBaseline='alphabetic';
 
   // la cubeta con agua
   const ax = E.x+18, aw = E.w-36;
